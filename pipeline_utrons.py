@@ -93,12 +93,15 @@ Code
 
 """
 from ruffus import *
-
+from ruffus.combinatorics import product
 import sys
 import os
 import sqlite3
+import glob
 import CGAT.Experiment as E
+import CGAT.Sra as Sra
 import CGATPipelines.Pipeline as P
+import CGATPipelines.PipelineRnaseq as RnaSeq
 
 # load options from the config file
 PARAMS = P.getParameters(
@@ -118,6 +121,7 @@ PARAMS.update(P.peekParameters(
     prefix="annotations_",
     update_interface=True))
 
+PARAMS["project_src"]=os.path.dirname(__file__)
 
 # if necessary, update the PARAMS dictionary in any modules file.
 # e.g.:
@@ -127,6 +131,7 @@ PARAMS.update(P.peekParameters(
 #
 # Note that this is a hack and deprecated, better pass all
 # parameters that are needed by a function explicitely.
+RnaSeq.PARAMS = PARAMS
 
 # -----------------------------------------------
 # Utility functions
@@ -139,7 +144,7 @@ def connect():
     Returns an sqlite3 database handle.
     '''
 
-    dbh = sqlite3.connect(PARAMS["database"])
+    dbh = sqlite3.connect(PARAMS["database_name"])
     statement = '''ATTACH DATABASE '%s' as annotations''' % (
         PARAMS["annotations_database"])
     cc = dbh.cursor()
@@ -148,42 +153,261 @@ def connect():
 
     return dbh
 
+STRINGTIE_QUANT_FILES=["i_data.ctab", "e_data.ctab", "t_data.ctab",
+                       "i2t.ctab", "e2t.ctab"]
+
 
 # ---------------------------------------------------
-# Specific pipeline tasks
-@transform(("pipeline.ini", "conf.py"),
-           regex("(.*)\.(.*)"),
-           r"\1.counts")
-def countWords(infile, outfile):
-    '''count the number of words in the pipeline configuration files.'''
+@follows(mkdir("assembled_transcripts.dir"))
+@transform(["input_assemble.dir/*.bam",
+            "input_assemble.dir/*.remote"],
+           formatter(),
+           add_inputs(os.path.join(
+               PARAMS["annotations_dir"],
+               PARAMS["annotations_interface_geneset_all_gtf"])),
+           "assembled_transcripts.dir/{basename[0]}.gtf.gz")
+def assembleWithStringTie(infiles, outfile):
 
-    # the command line statement we want to execute
-    statement = '''awk 'BEGIN { printf("word\\tfreq\\n"); } 
-    {for (i = 1; i <= NF; i++) freq[$i]++}
-    END { for (word in freq) printf "%%s\\t%%d\\n", word, freq[word] }'
-    < %(infile)s > %(outfile)s'''
+    infile, reference = infiles
 
-    # execute command in variable statement.
-    #
-    # The command will be sent to the cluster.  The statement will be
-    # interpolated with any options that are defined in in the
-    # configuration files or variable that are declared in the calling
-    # function.  For example, %(infile)s will we substituted with the
-    # contents of the variable "infile".
+    job_threads = PARAMS["stringtie_threads"]
+    job_memory = PARAMS["stringtie_memory"]
+
+    statement = '''stringtie %(infile)s
+                           -p %(stringtie_threads)s
+                           -G <(zcat %(reference)s)
+                           %(stringtie_options)s
+                           2> %(outfile)s.log
+                   | gzip > %(outfile)s '''
+
+    if infile.endswith(".remote"):
+        token = glob.glob("gdc-user-token*")
+        tmpfilename = P.getTempFilename()
+        if len(token) > 0:
+            token = token[0]
+        else:
+            token = None
+
+        s, infile = Sra.process_remote_BAM(
+            infile, token, tmpfilename,
+            filter_bed=os.path.join(
+                PARAMS["annotations_dir"],
+                PARAMS["annotations_interface_contigs_bed"]))
+
+        infile = " ".join(infile)
+        statement = "; checkpoint ;".join(
+            ["mkdir %(tmpfilename)s",
+             s,
+             statement,
+             "rm -r %(tmpfilename)s"])
+
     P.run()
 
 
-@transform(countWords,
-           suffix(".counts"),
-           "_counts.load")
-def loadWordCounts(infile, outfile):
-    '''load results of word counting into database.'''
-    P.load(infile, outfile, "--add-index=word")
+# ---------------------------------------------------
+@follows(mkdir("final_genesets.dir"))
+@merge([assembleWithStringTie,
+       os.path.join(
+           PARAMS["annotations_dir"],
+           PARAMS["annotations_interface_geneset_all_gtf"])],
+       "final_genesets.dir/agg-agg-agg.gtf.gz")
+def mergeAllAssemblies(infiles, outfile):
+
+    infiles = ["<(zcat %s)" % infile for infile in infiles]
+    infiles, reference = infiles[:-1], infiles[-1]
+
+    job_threads = PARAMS["stringtie_merge_threads"]
+
+    infiles = " ".join(infiles)
+
+    statement = '''stringtie --merge
+                             -G %(reference)s
+                             -p %(stringtie_merge_threads)s
+                             %(stringtie_merge_options)s
+                             %(infiles)s
+                            2> %(outfile)s.log
+                   | python %(scriptsdir)s/gtf2gtf.py --method=sort
+                           --sort-order=gene+transcript
+                            -S %(outfile)s -L %(outfile)s.log'''
+
+    P.run() 
+
+
+@follows(mergeAllAssemblies)
+def Assembly():
+    pass
+
+
+# ---------------------------------------------------
+@transform([assembleWithStringTie, mergeAllAssemblies],
+           suffix(".gtf.gz"),
+           add_inputs(os.path.join(
+               PARAMS["annotations_dir"],
+               PARAMS["annotations_interface_geneset_all_gtf"])),
+           ".class.gz")
+def classifyTranscripts(infiles, outfile):
+    '''classify transcripts.
+    '''
+    to_cluster = True
+
+    infile, reference = infiles
+
+    counter = PARAMS['gtf2table_classifier']
+
+    job_memory = "4G"
+
+    statement = '''
+    zcat %(infile)s
+    | python %(scriptsdir)s/gtf2table.py
+           --counter=%(counter)s
+           --reporter=transcripts
+           --gff-file=%(reference)s
+           --log=%(outfile)s.log
+    | gzip
+    > %(outfile)s
+    '''
+    P.run()
+
+
+# ---------------------------------------------------
+@merge(classifyTranscripts,
+       "transcript_class.load")
+def loadTranscriptClassification(infiles, outfile):
+
+    P.concatenateAndLoad(infiles, outfile,
+                         regex_filename=".+/(.+).class.gz",
+                         options="-i transcript_id -i gene_id"
+                         "-i match_gene_id -i match_transcript_id"
+                         "-i source --quick")
+
+
+# ---------------------------------------------------
+@follows(mkdir("utron_beds.dir"),classifyTranscripts)
+@subdivide([assembleWithStringTie, mergeAllAssemblies],
+           regex("(.+)/(.+).gtf.gz"),
+           add_inputs(os.path.join(
+               PARAMS["annotations_dir"],
+               PARAMS["annotations_interface_geneset_all_gtf"]),
+                      r"\1/\2.class.gz"),
+           [r"utron_beds.dir/\2.all_utrons.bed.gz",
+            r"utron_beds.dir/\2.partnered_utrons.bed.gz",
+            r"utron_beds.dir/\2.novel_utrons.bed.gz"])
+def find_utrons(infiles, outfiles):
+
+    infile, reference, classfile = infiles
+
+    job_memory="4G"
+
+    all_out, part_out, novel_out = outfiles
+
+    track = P.snip(all_out, ".all_utrons.bed.gz")
+
+    statement = '''python %(scriptsdir)s/gtf2gtf.py -I %(infile)s
+                             --method=sort
+                             --sort-order=gene+transcript
+                              -L %(track)s.log
+                 | python %(project_src)s/utrons/find_utrons.py
+                             --reffile=%(reference)s
+                             --class-file=%(classfile)s
+                             --outfile %(all_out)s
+                             --partfile=%(part_out)s
+                             --novel-file=%(novel_out)s
+                              -L %(track)s.log'''
+
+    P.run()
+
+
+# ---------------------------------------------------
+@transform(find_utrons,
+           suffix(".bed.gz"),
+           ".ids.gz")
+def getUtronIds(infile, outfile):
+
+    statement = '''zcat %(infile)s 
+                 | cut -f 4
+                 | sed 's/:/\\t/g'
+                 | sort -u
+                 | gzip > %(outfile)s'''
+
+    P.run()
+
+
+# ---------------------------------------------------
+@collate(getUtronIds,
+         regex(".+/(.+)\.(.+).ids.gz"),
+         r"\2_ids.load")
+def loadUtronIDs(infiles, outfile):
+
+    header = "track,category,transcript_id"
+    options = "-i track -i category -i transcript_id"
+
+    if not outfile == "all_utrons_ids.load":
+        header += ",match_transcript_id"
+        options += "-i match_transcript_id"
+
+    P.concatenateAndLoad(infiles, outfile,
+                         regex_filename="([^/]+)\.ids.gz",
+                         has_titles=False,
+                         cat="track",
+                         header=header,
+                         options=options)
+
+
+@follows(loadUtronIDs, loadTranscriptClassification)
+def AnnotateAssemblies():
+    pass
+
+
+@follows(mkdir("export/indexed_gtfs.dir"))
+@transform([mergeAllAssemblies,
+            assembleWithStringTie],
+           regex(".+/(.+).gtf.gz"),
+           r"export/indexed_gtfs.dir/\1.gtf.gz")
+def exportIndexedGTFs(infile, outfile):
+
+    statement = '''zcat %(infile)s
+                 | sort -k1,1 -k4,4n
+                 | bgzip > %(outfile)s;
+
+                 checkpoint;
+
+                 tabix -p gff %(outfile)s'''
+
+    P.run()
+
+# ---------------------------------------------------
+@follows(mkdir("quantification.dir"),
+         mergeAllAssemblies)
+@product("input_quantify.dir/*.bam",
+         formatter(".+/(?P<TRACK>.+).bam"),
+         "final_genesets.dir/*.gtf.gz",
+         formatter(".+/(?P<GENESET>.+).gtf.gz"),
+         "quantification.dir/{TRACK[0][0]}_{GENESET[1][0]}.log")
+def quantifyWithStringTie(infiles, outfile):
+    '''Quantify existing samples against genesets'''
+
+    bamfile, gtffile = infiles
+    outdir = P.snip(outfile, ".log")
+    RnaSeq.quantifyWithStringTie(bamfile=bamfile,
+                                 gtffile=gtffile,
+                                 outdir=outdir)
+
+
+@collate(quantifyWithStringTie,
+         regex(".+/(.+)_(.+).log"),
+         inputs([os.path.join(r"quantification.dir/\1_\2", x)
+                 for x in STRINGTIE_QUANT_FILES]),
+         r"quantification.dir/\2_stringtie.load")
+def loadStringTieQuant(infiles, outfile):
+
+    RnaSeq.mergeAndLoadStringTie(infiles,
+                                 ".+/(.+)_.+/",
+                                 outfile)
 
 
 # ---------------------------------------------------
 # Generic pipeline tasks
-@follows(loadWordCounts)
+@follows(loadStringTieQuant)
 def full():
     pass
 
