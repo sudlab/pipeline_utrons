@@ -231,15 +231,41 @@ def mergeAllAssemblies(infiles, outfile):
                             -S %(outfile)s -L %(outfile)s.log'''
 
     P.run() 
+ 
+@collate(assembleWithStringTie,
+         regex("(.+)/(.+)-(.+)-(.+).gtf.gz"),
+         add_inputs(os.path.join(
+            PARAMS["annotations_dir"],
+            PARAMS["annotations_interface_geneset_all_gtf"])),
+         r"\1/\2-agg-agg.gtf.gz")
+def merge_by_tissue(infiles, outfile):
 
+    reference = "<(zcat %s)" % infiles[0][0]
+    infiles = ["<(zcat %s)" % infile[0] for infile in infiles]
 
-@follows(mergeAllAssemblies)
+    job_threads = PARAMS["stringtie_merge_threads"]
+
+    infiles = " ".join(infiles)
+
+    statement = '''stringtie --merge
+                             -G %(reference)s
+                             -p %(stringtie_merge_threads)s
+                             %(stringtie_merge_options)s
+                             %(infiles)s
+                            2> %(outfile)s.log
+                   | python %(scriptsdir)s/gtf2gtf.py --method=sort
+                           --sort-order=gene+transcript
+                            -S %(outfile)s -L %(outfile)s.log'''
+
+    P.run() 
+
+@follows(mergeAllAssemblies, merge_by_tissue)
 def Assembly():
     pass
 
 
 # ---------------------------------------------------
-@transform([assembleWithStringTie, mergeAllAssemblies],
+@transform([assembleWithStringTie, mergeAllAssemblies, merge_by_tissue],
            suffix(".gtf.gz"),
            add_inputs(os.path.join(
                PARAMS["annotations_dir"],
@@ -283,7 +309,7 @@ def loadTranscriptClassification(infiles, outfile):
 
 # ---------------------------------------------------
 @follows(mkdir("utron_beds.dir"),classifyTranscripts)
-@subdivide([assembleWithStringTie, mergeAllAssemblies],
+@subdivide([assembleWithStringTie, mergeAllAssemblies, merge_by_tissue],
            regex("(.+)/(.+).gtf.gz"),
            add_inputs(os.path.join(
                PARAMS["annotations_dir"],
@@ -338,15 +364,15 @@ def getUtronIds(infile, outfile):
          r"\2_ids.load")
 def loadUtronIDs(infiles, outfile):
 
-    header = "track,category,transcript_id"
-    options = "-i track -i category -i transcript_id"
+    header = "track,transcript_id"
+    options = "-i track -i transcript_id"
 
     if not outfile == "all_utrons_ids.load":
         header += ",match_transcript_id"
         options += "-i match_transcript_id"
 
     P.concatenateAndLoad(infiles, outfile,
-                         regex_filename="([^/]+)\.ids.gz",
+                         regex_filename=".+/(.+)\..+\.ids.gz",
                          has_titles=False,
                          cat="track",
                          header=header,
@@ -375,11 +401,18 @@ def exportIndexedGTFs(infile, outfile):
 
     P.run()
 
+
+@follows(exportIndexedGTFs)
+def export():
+    pass
+
+
 # ---------------------------------------------------
 @follows(mkdir("quantification.dir"),
          mergeAllAssemblies)
-@product("input_quantify.dir/*.bam",
-         formatter(".+/(?P<TRACK>.+).bam"),
+@product(["input_quantify.dir/*.bam",
+          "input_quantify.dir/*.remote"],
+         formatter(".+/(?P<TRACK>.+).(?:bam|remote)"),
          "final_genesets.dir/*.gtf.gz",
          formatter(".+/(?P<GENESET>.+).gtf.gz"),
          "quantification.dir/{TRACK[0][0]}_{GENESET[1][0]}.log")
@@ -407,7 +440,9 @@ def loadStringTieQuant(infiles, outfile):
 
 # ---------------------------------------------------
 # Generic pipeline tasks
-@follows(loadStringTieQuant)
+@follows(loadStringTieQuant,
+         AnnotateAssemblies,
+         export)
 def full():
     pass
 
