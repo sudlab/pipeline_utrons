@@ -158,7 +158,7 @@ STRINGTIE_QUANT_FILES=["i_data.ctab", "e_data.ctab", "t_data.ctab",
 
 
 # ---------------------------------------------------
-@follows(mkdir("assembled_transcripts.dir"))
+@follows(mkdir("assembled_transcripts.dir"), mkdir("portcullis"))
 @transform(["input_assemble.dir/*.bam",
             "input_assemble.dir/*.remote"],
            formatter(),
@@ -169,16 +169,30 @@ STRINGTIE_QUANT_FILES=["i_data.ctab", "e_data.ctab", "t_data.ctab",
 def assembleWithStringTie(infiles, outfile):
 
     infile, reference = infiles
-
+    basefile = os.path.basename(infile)
     job_threads = PARAMS["stringtie_threads"]
     job_memory = PARAMS["stringtie_memory"]
+    tmpfile = P.getTempFilename()
 
-    statement = '''stringtie %(infile)s
+    statement =  '''module load bio/portcullis;
+                    portcullis full 
+                            -t %(portcullis_threads)s
+                            -o portcullis/%(basefile)s/
+                            -r %(portcullis_bedref)s
+                            -b 
+                            %(portcullis_fastaref)s
+                            %(infile)s;
+                    checkpoint;
+                    mv portcullis/%(basefile)s/portcullis.filtered.bam %(tmpfile)s;
+		    rm -r portcullis/%(basefile)s/;
+                    stringtie %(tmpfile)s
                            -p %(stringtie_threads)s
                            -G <(zcat %(reference)s)
                            %(stringtie_options)s
                            2> %(outfile)s.log
-                   | gzip > %(outfile)s '''
+                   | gzip > %(outfile)s;
+                   checkpoint;
+                   rm %(tmpfile)s'''
 
     if infile.endswith(".remote"):
         token = glob.glob("gdc-user-token*")
@@ -280,7 +294,7 @@ def classifyTranscripts(infiles, outfile):
 
     counter = PARAMS['gtf2table_classifier']
 
-    job_memory = "4G"
+    job_memory = "10G"
 
     statement = '''
     zcat %(infile)s
