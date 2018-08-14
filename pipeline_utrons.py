@@ -98,30 +98,28 @@ import sys
 import os
 import sqlite3
 import glob
-from CGATCore import Experiment as E
+import CGAT.Experiment as E
 import CGAT.Sra as Sra
-from CGATCore import Pipeline as P
+import CGATPipelines.Pipeline as P
 import CGATPipelines.PipelineRnaseq as RnaSeq
-import tempfile
-from CGATPipelines.Report import run_report
 
 # load options from the config file
-PARAMS = P.get_parameters(
-    ["%s/pipeline.yml" % os.path.splitext(__file__)[0],
-     "../pipeline.yml",
-     "pipeline.yml"])
+PARAMS = P.getParameters(
+    ["%s/pipeline.ini" % os.path.splitext(__file__)[0],
+     "../pipeline.ini",
+     "pipeline.ini"])
 
 # add configuration values from associated pipelines
 #
 # 1. pipeline_annotations: any parameters will be added with the
 #    prefix "annotations_". The interface will be updated with
 #    "annotations_dir" to point to the absolute path names.
-PARAMS.update(P.peek_parameters(
+PARAMS.update(P.peekParameters(
     PARAMS["annotations_dir"],
-    'genesets',
+    "pipeline_annotations.py",
+    on_error_raise=__name__ == "__main__",
     prefix="annotations_",
-    update_interface=True,
-    restrict_interface=True))
+    update_interface=True))
 
 PARAMS["project_src"]=os.path.dirname(__file__)
 
@@ -160,7 +158,7 @@ STRINGTIE_QUANT_FILES=["i_data.ctab", "e_data.ctab", "t_data.ctab",
 
 
 # ---------------------------------------------------
-@follows(mkdir("assembled_transcripts.dir"), mkdir("portcullis"))
+@follows(mkdir("assembled_transcripts.dir"))
 @transform(["input_assemble.dir/*.bam",
             "input_assemble.dir/*.remote"],
            formatter(),
@@ -171,36 +169,20 @@ STRINGTIE_QUANT_FILES=["i_data.ctab", "e_data.ctab", "t_data.ctab",
 def assembleWithStringTie(infiles, outfile):
 
     infile, reference = infiles
-    basefile = os.path.basename(infile)
+
     job_threads = PARAMS["stringtie_threads"]
     job_memory = PARAMS["stringtie_memory"]
-    tmpfile = P.get_temp_filename()
-    if os.path.exists(tmpfile): 
-    	os.unlink(tmpfile)
-    
-    statement =  '''
-                    portcullis full 
-                            -t 1
-                            -o portcullis/%(basefile)s/
-                            -r %(portcullis_bedref)s
-                            -b 
-                            %(portcullis_fastaref)s
-                            %(infile)s;
-                    mv portcullis/%(basefile)s/portcullis.filtered.bam %(tmpfile)s;
-		    rm -r portcullis/%(basefile)s/;
-                    stringtie %(tmpfile)s
+
+    statement = '''stringtie %(infile)s
                            -p %(stringtie_threads)s
                            -G <(zcat %(reference)s)
                            %(stringtie_options)s
                            2> %(outfile)s.log
-                   | gzip > %(outfile)s;
-                   rm %(tmpfile)s'''
+                   | gzip > %(outfile)s '''
 
     if infile.endswith(".remote"):
         token = glob.glob("gdc-user-token*")
-        tmpfilename = P.get_temp_filename()
-        if os.path.exists(tmpfilename):
-            os.unlink(tmpfilename)    	
+        tmpfilename = P.getTempFilename()
         if len(token) > 0:
             token = token[0]
         else:
@@ -213,13 +195,13 @@ def assembleWithStringTie(infiles, outfile):
                 PARAMS["annotations_interface_contigs_bed"]))
 
         infile = " ".join(infile)
-        statement = "; ".join(
-            ["mkdir -p %(tmpfilename)s",
+        statement = "; checkpoint ;".join(
+            ["mkdir %(tmpfilename)s",
              s,
              statement,
              "rm -r %(tmpfilename)s"])
 
-    P.run(statement)
+    P.run()
 
 
 # ---------------------------------------------------
@@ -235,7 +217,6 @@ def mergeAllAssemblies(infiles, outfile):
     infiles, reference = infiles[:-1], infiles[-1]
 
     job_threads = PARAMS["stringtie_merge_threads"]
-    job_memory = "16G"
 
     infiles = " ".join(infiles)
 
@@ -245,11 +226,11 @@ def mergeAllAssemblies(infiles, outfile):
                              %(stringtie_merge_options)s
                              %(infiles)s
                             2> %(outfile)s.log
-                   | cgat gtf2gtf --method=sort
+                   | python %(scriptsdir)s/gtf2gtf.py --method=sort
                            --sort-order=gene+transcript
                             -S %(outfile)s -L %(outfile)s.log'''
 
-    P.run(statement) 
+    P.run() 
  
 @collate(assembleWithStringTie,
          regex("(.+)/(.+)-(.+)-(.+).gtf.gz"),
@@ -263,7 +244,7 @@ def merge_by_tissue(infiles, outfile):
     infiles = ["<(zcat %s)" % infile[0] for infile in infiles]
 
     job_threads = PARAMS["stringtie_merge_threads"]
-    job_memory="16G"
+
     infiles = " ".join(infiles)
 
     statement = '''stringtie --merge
@@ -272,7 +253,7 @@ def merge_by_tissue(infiles, outfile):
                              %(stringtie_merge_options)s
                              %(infiles)s
                             2> %(outfile)s.log
-                   | cgat gtf2gtf --method=sort
+                   | python %(scriptsdir)s/gtf2gtf.py --method=sort
                            --sort-order=gene+transcript
                             -S %(outfile)s -L %(outfile)s.log'''
 
@@ -299,11 +280,11 @@ def classifyTranscripts(infiles, outfile):
 
     counter = PARAMS['gtf2table_classifier']
 
-    job_memory = "16G"
+    job_memory = "4G"
 
     statement = '''
     zcat %(infile)s
-    | cgat gtf2table
+    | python %(scriptsdir)s/gtf2table.py
            --counter=%(counter)s
            --reporter=transcripts
            --gff-file=%(reference)s
@@ -311,7 +292,7 @@ def classifyTranscripts(infiles, outfile):
     | gzip
     > %(outfile)s
     '''
-    P.run(statement)
+    P.run()
 
 
 # ---------------------------------------------------
@@ -319,12 +300,11 @@ def classifyTranscripts(infiles, outfile):
        "transcript_class.load")
 def loadTranscriptClassification(infiles, outfile):
 
-    P.concatenate_and_load(infiles, outfile,
+    P.concatenateAndLoad(infiles, outfile,
                          regex_filename=".+/(.+).class.gz",
                          options="-i transcript_id -i gene_id"
                          "-i match_gene_id -i match_transcript_id"
-                         "-i source",
-                         job_memory="4G")
+                         "-i source --quick")
 
 
 # ---------------------------------------------------
@@ -342,17 +322,17 @@ def find_utrons(infiles, outfiles):
 
     infile, reference, classfile = infiles
 
-    job_memory="16G"
+    job_memory="4G"
 
     all_out, part_out, novel_out = outfiles
 
     track = P.snip(all_out, ".all_utrons.bed.gz")
 
-    statement = '''cgat gtf2gtf -I %(infile)s
+    statement = '''python %(scriptsdir)s/gtf2gtf.py -I %(infile)s
                              --method=sort
                              --sort-order=gene+transcript
                               -L %(track)s.log
-                 | python /data/mb1cna/cgat/cgat-flow/CGATPipelines/pipeline_utrons/find_utrons.py
+                 | python %(project_src)s/utrons/find_utrons.py
                              --reffile=%(reference)s
                              --class-file=%(classfile)s
                              --outfile %(all_out)s
@@ -360,7 +340,7 @@ def find_utrons(infiles, outfiles):
                              --novel-file=%(novel_out)s
                               -L %(track)s.log'''
 
-    P.run(statement)
+    P.run()
 
 
 # ---------------------------------------------------
@@ -375,7 +355,7 @@ def getUtronIds(infile, outfile):
                  | sort -u
                  | gzip > %(outfile)s'''
 
-    P.run(statement)
+    P.run()
 
 
 # ---------------------------------------------------
@@ -391,7 +371,7 @@ def loadUtronIDs(infiles, outfile):
         header += ",match_transcript_id"
         options += "-i match_transcript_id"
 
-    P.concatenate_and_load(infiles, outfile,
+    P.concatenateAndLoad(infiles, outfile,
                          regex_filename=".+/(.+)\..+\.ids.gz",
                          has_titles=False,
                          cat="track",
@@ -415,10 +395,11 @@ def exportIndexedGTFs(infile, outfile):
                  | sort -k1,1 -k4,4n
                  | bgzip > %(outfile)s;
 
-                 
+                 checkpoint;
+
                  tabix -p gff %(outfile)s'''
 
-    P.run(statement)
+    P.run()
 
 
 @follows(exportIndexedGTFs)
@@ -427,151 +408,44 @@ def export():
 
 
 # ---------------------------------------------------
-@follows(mkdir("salmon_index"),exportIndexedGTFs)
-@transform("final_genesets.dir/*.gtf.gz",
-           formatter(),
-           "salmon_index/{basename[0]}.salmon.index")
-def makeSalmonIndex(infile,outfile):
-    # Long transcripts cause indexing to use lots of memory?
-    job_memory="64G"
-    job_threads=1
-
-    gtf_basename = P.snip(os.path.basename(infile), ".gtf.gz")
-    transcript_fasta = "salmon_index/" + gtf_basename + "transcripts.fa"
-    fastaref =PARAMS["portcullis_fastaref"]
-    index_options=PARAMS["salmon_indexoptions"]
-    tmpfile = P.get_temp_filename()
-    
-
-
-    statement = '''
-    gunzip -c %(infile)s > %(tmpfile)s;
-    gffread %(tmpfile)s -g %(fastaref)s -w %(transcript_fasta)s;
-    salmon index
-      -p %(job_threads)s
-      %(index_options)s
-      -t %(transcript_fasta)s
-      -i %(outfile)s
-      --perfectHash;
-    rm %(tmpfile)s
-    '''
-    P.run(statement)
-
-
-#---------------------------------------------------------
-
-
-
 @follows(mkdir("quantification.dir"),
-         mergeAllAssemblies, makeSalmonIndex)
-@product(["input_assemble.dir/*.bam",
-          "input_assemble.dir/*.remote"],
-         formatter(".+/(?P<TRACK>.+).([bam|remote])"),
+         mergeAllAssemblies)
+@product(["input_quantify.dir/*.bam",
+          "input_quantify.dir/*.remote"],
+         formatter(".+/(?P<TRACK>.+).(?:bam|remote)"),
          "final_genesets.dir/*.gtf.gz",
          formatter(".+/(?P<GENESET>.+).gtf.gz"),
-         "quantification.dir/{TRACK[0][0]}_{GENESET[1][0]}")
-def quantifyWithSalmon(infiles, outfile):
+         "quantification.dir/{TRACK[0][0]}_{GENESET[1][0]}.log")
+def quantifyWithStringTie(infiles, outfile):
     '''Quantify existing samples against genesets'''
-    job_threads=2
-    job_memory="8G"
 
-    infile, gtffile = infiles
-    basefile = os.path.basename(infile)
-    gtfbase = P.snip(os.path.basename(gtffile), ".gz")
-    salmonIndex = "salmon_index/" + gtfbase + ".salmon.index"
-    fastq1 = P.snip(outfile, "_agg-agg-agg")+".1.fastq"
-    fastq2 = P.snip(outfile, "_agg-agg-agg")+".2.fastq"
-    salmon_options=PARAMS["salmon_quantoptions"]
-
-    statement = '''
-    samtools fastq
-         -1 %(fastq1)s
-         -2 %(fastq2)s
-         %(infile)s; 
-    salmon quant -i %(salmonIndex)s
-        --libType A
-        -1 %(fastq1)s
-        -2 %(fastq2)s
-        -o %(outfile)s
-        --threads %(job_threads)s
-        %(salmon_options)s; 
-    mv %(outfile)s/quant.sf %(outfile)s.sf; 
-    rm %(fastq1)s; rm %(fastq2)s 
-    '''
-
-    if infile.endswith(".remote"):
-        token = glob.glob("gdc-user-token*")
-        filename = "temp_bams/%s" % basefile
-        tmpfilename = P.get_temp_filename()
-        if os.path.exists(tmpfilename):
-            os.unlink(tmpfilename)
-
-        if len(token) > 0:
-            token = token[0]
-        else:
-            token = None
-
-        s, infile = Sra.process_remote_BAM(
-            infile, token, filename,
-            filter_bed=os.path.join(
-                PARAMS["annotations_dir"],
-                PARAMS["annotations_interface_contigs_bed"]))
-
-        infile = " ".join(infile)
-        statement = "; ".join(
-            ["mkdir %(filename)s",
-             s,
-             statement,
-             "rm -r %(filename)s"])
+    bamfile, gtffile = infiles
+    outdir = P.snip(outfile, ".log")
+    RnaSeq.quantifyWithStringTie(bamfile=bamfile,
+                                 gtffile=gtffile,
+                                 outdir=outdir)
 
 
+@collate(quantifyWithStringTie,
+         regex(".+/(.+)_(.+).log"),
+         inputs([os.path.join(r"quantification.dir/\1_\2", x)
+                 for x in STRINGTIE_QUANT_FILES]),
+         r"quantification.dir/\2_stringtie.load")
+def loadStringTieQuant(infiles, outfile):
 
-    P.run(statement)
-
-#----------------------------------------------------
-# ***********
-# NOTE - last time I used this, the output database wasn't indexed correctly
-# ***********
-@follows(quantifyWithSalmon)
-@merge("quantification.dir/*.sf", "salmon_quant.load")
-def mergeAllQuants(infiles, outfile):
-    job_memory="6G"
-    P.concatenate_and_load(infiles, outfile,
-                         regex_filename="quantification.dir/(.*-.*-.*)_agg-agg-agg.sf",
-                         options="-i Name -i Length -i EffectiveLength"
-                         "-i TPM -i NumReads -i track"
-                         "-i source")
-
+    RnaSeq.mergeAndLoadStringTie(infiles,
+                                 ".+/(.+)_.+/",
+                                 outfile)
 
 
 # ---------------------------------------------------
 # Generic pipeline tasks
-@follows(mergeAllQuants,
+@follows(loadStringTieQuant,
          AnnotateAssemblies,
-         export,
-         mergeAllQuants)
+         export)
 def full():
     pass
 
-################################################### added #
-
-@follows(mkdir("MultiQC_report.dir"))
-@originate("MultiQC_report.dir/multiqc_report.html")
-def renderMultiqc(infile):
-    '''build mulitqc report'''
-
-    statement = (
-        "export LANG=en_GB.UTF-8 && "
-        "export LC_ALL=en_GB.UTF-8 && "
-        "multiqc . -f && "
-        "mv multiqc_report.html MultiQC_report.dir/")
-
-    P.run(statement)
-
-
-@follows(renderMultiqc)
-
-################################################### added #
 
 @follows(mkdir("report"))
 def build_report():
@@ -581,7 +455,7 @@ def build_report():
     '''
 
     E.info("starting report build process from scratch")
-    run_report(clean=True)
+    P.run_report(clean=True)
 
 
 @follows(mkdir("report"))
@@ -595,7 +469,7 @@ def update_report():
     '''
 
     E.info("updating report")
-    run_report(clean=False)
+    P.run_report(clean=False)
 
 
 @follows(update_report)
@@ -604,13 +478,6 @@ def publish_report():
 
     E.info("publishing report")
     P.publish_report()
-
-
-def main(argv=None):
-    if argv is None:
-        argv = sys.argv
-    P.main(argv)
-
 
 if __name__ == "__main__":
     sys.exit(P.main(sys.argv))
