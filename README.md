@@ -16,19 +16,19 @@
 3. RNA-seq reads in `fastq.1.gz` and `fastq.2.gz` format     =>     3. Quantification files in `.sf` fornat
 
 ## For accessing the pipeline through cgatflow command
-Clone/download the repository folder `updated_pipeline_utrons` (this is the updated version of the pipeline_utrons, for usage with python3)
+Clone/download the repository folder `updated_pipeline_utrons` (this is the updated version of the pipeline_utrons, for usage with python3).
 Copy the contents of `updated_pipeline_utrons` directory to your `cgat/cgat-flow/CGATPipelines/`.
 
 ## Configuration
 The pipeline requires a configured :file: `pipeline.yml` file.
 
 Make a directory with your project name.
-Configure the pipeline with `cgatflow utrons config`
-A pipeline.log and pipeline.yml file(s) will be added to your new directory
-Modify the pipeline.yml according to your project (specify annotation database and directory, database for uploading the outputs; specify options for Salmon quantification)
+Configure the pipeline with `cgatflow utrons config`.
+A pipeline.log and pipeline.yml file(s) will be added to your new directory.
+Modify the pipeline.yml according to your project (specify annotation database and directory, database for uploading the outputs; specify options for Salmon quantification).
 
 ## Pipeline use
-Run the pipeline with `cgatflow utrons make full`
+Run the pipeline with `cgatflow utrons make full`.
 
 For running the pipeline on a large set of samples, submit the pipeline onto the cluster (sharc), using a submit_pipeline_cgtaflow custom script.
 
