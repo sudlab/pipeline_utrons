@@ -10,10 +10,10 @@
    * Makes a Salmon index and quantifies transcripts with Salmon.
    * Merges all quantification files and uploads the outputs onto database.
    
-## Inputs needed                                                    Outputs generated
-1. RNA-se read alignments in a `.bam` format                 =>     1. Assembled transcripts in `.gtf` format
-2. A transcriptome in `.fa` format                           =>     2. A salmon index
-3. RNA-seq reads in `fastq.1.gz` and `fastq.2.gz` format     =>     3. Quantification files in `.sf` fornat
+## Inputs needed          
+1. RNA-se read alignments in a .bam format, in order to generate assembled transcripts in .gtf format.
+2. A transcriptome in .fa format, in order to build a salmon index.
+3. RNA-seq reads in fastq.1.gz and fastq.2.gz formats, for generating salmon quantification files in .sf format.
 
 ## For accessing the pipeline through cgatflow command
 Clone/download the repository folder `updated_pipeline_utrons` (this is the updated version of the pipeline_utrons, for usage with python3).
