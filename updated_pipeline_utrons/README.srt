@@ -1,0 +1,11 @@
+The CGAT pipelines
+
+The CGAT pipelines package contains a set of ruffus based pipelines to run workflows in comparative genomics or and NGS analysis.
+
+We are currently in the process of building this package, please come back and visit soon.
+
+For questions, please subscribe and contact us at the CGAT user group.
+
+Documentation of CGAT tools is available here.
+
+Note that we currently are not able to fully support and document the pipelines. They are under continuous development and changing rapidly. However, they might give some ideas or building blocks when developing your own pipelines.
