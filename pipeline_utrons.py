@@ -303,8 +303,8 @@ def loadTranscriptClassification(infiles, outfile):
     P.concatenateAndLoad(infiles, outfile,
                          regex_filename=".+/(.+).class.gz",
                          options="-i transcript_id -i gene_id"
-                         "-i match_gene_id -i match_transcript_id"
-                         "-i source --quick")
+                         " -i match_gene_id -i match_transcript_id"
+                         " -i source --quick")
 
 
 # ---------------------------------------------------
@@ -369,7 +369,7 @@ def loadUtronIDs(infiles, outfile):
 
     if not outfile == "all_utrons_ids.load":
         header += ",match_transcript_id"
-        options += "-i match_transcript_id"
+        options += " -i match_transcript_id"
 
     P.concatenateAndLoad(infiles, outfile,
                          regex_filename=".+/(.+)\..+\.ids.gz",
