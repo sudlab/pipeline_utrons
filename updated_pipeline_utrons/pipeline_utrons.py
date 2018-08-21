@@ -381,8 +381,8 @@ def loadTranscriptClassification(infiles, outfile):
     P.concatenate_and_load(infiles, outfile,
                          regex_filename=".+/(.+).class.gz",
                          options="-i transcript_id -i gene_id"
-                         "-i match_gene_id -i match_transcript_id"
-                         "-i source",
+                         " -i match_gene_id -i match_transcript_id"
+                         " -i source",
                          job_memory="4G")
 
 
@@ -448,7 +448,7 @@ def loadUtronIDs(infiles, outfile):
 
     if not outfile == "all_utrons_ids.load":
         header += ",match_transcript_id"
-        options += "-i match_transcript_id"
+        options += " -i match_transcript_id"
 
     P.concatenate_and_load(infiles, outfile,
                          regex_filename=".+/(.+)\..+\.ids.gz",
@@ -598,8 +598,8 @@ def mergeAllQuants(infiles, outfile):
     P.concatenate_and_load(infiles, outfile,
                          regex_filename="quantification.dir/(.*-.*-.*)_agg-agg-agg.sf",
                          options="-i Name -i Length -i EffectiveLength"
-                         "-i TPM -i NumReads -i track"
-                         "-i source")
+                         " -i TPM -i NumReads -i track"
+                         " -i source")
 
 
 
