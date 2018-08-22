@@ -335,7 +335,7 @@ def merge_by_tissue(infiles, outfile):
                            --sort-order=gene+transcript
                             -S %(outfile)s -L %(outfile)s.log'''
 
-    P.run() 
+    P.run(statement) 
 
 @follows(mergeAllAssemblies, merge_by_tissue)
 def Assembly():
