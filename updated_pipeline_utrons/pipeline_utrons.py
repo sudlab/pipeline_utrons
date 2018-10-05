@@ -519,7 +519,10 @@ def makeSalmonIndex(infile,outfile):
 
 #---------------------------------------------------------
 
+directory = "./temp_bams"
 
+if not os.path.exists(directory):
+    os.makedirs(directory)
 
 @follows(mkdir("quantification.dir"),
          mergeAllAssemblies, makeSalmonIndex)
