@@ -310,32 +310,33 @@ def mergeAllAssemblies(infiles, outfile):
 
     P.run(statement) 
  
-@collate(assembleWithStringTie,
-         regex("(.+)/(.+)-(.+)-(.+).gtf.gz"),
+### Merge genesets by tissue/group
+## groups need to be defined in the pipeline.yml file, for stringtie: groups.
+
+@collate([glob.glob("assembled_transcripts.dir/%s*.gtf.gz" % PARAMS["stringtie_groups"][x]) for x in range(0, len(PARAMS["stringtie_groups"]))],
+         regex("(.+)/(.+)-(.+).gtf.gz"),
          add_inputs(os.path.join(
             PARAMS["annotations_dir"],
             PARAMS["annotations_interface_geneset_all_gtf"])),
-         r"\1/\2-agg-agg.gtf.gz")
+          r"final_genesets.dir/\2-agg-agg-agg.gtf.gz")
 def merge_by_tissue(infiles, outfile):
-
-    reference = "<(zcat %s)" % infiles[0][0]
-    infiles = ["<(zcat %s)" % infile[0] for infile in infiles]
-
     job_threads = PARAMS["stringtie_merge_threads"]
-    job_memory="16G"
+    job_memory= PARAMS["stringtie_merge_memory"]
+
+    reference = "<(zcat %s)" % infiles[0][1]
+    infiles = ["<(zcat %s)" % infile for infile in infiles[0][0]]
     infiles = " ".join(infiles)
 
     statement = '''stringtie --merge
-                             -G %(reference)s
-                             -p %(stringtie_merge_threads)s
-                             %(stringtie_merge_options)s
-                             %(infiles)s
-                            2> %(outfile)s.log
-                   | cgat gtf2gtf --method=sort
-                           --sort-order=gene+transcript
-                            -S %(outfile)s -L %(outfile)s.log'''
-
-    P.run(statement) 
+                    -G %(reference)s
+                    -p %(stringtie_merge_threads)s
+                    %(stringtie_merge_options)s
+                    %(infiles)s
+                    2> %(outfile)s.log
+               | python %(scriptsdir)s/gtf2gtf.py --method=sort
+                   --sort-order=gene+transcript
+                   -S %(outfile)s -L %(outfile)s.log'''
+    P.run(statement)
 
 @follows(mergeAllAssemblies, merge_by_tissue)
 def Assembly():
@@ -463,19 +464,22 @@ def AnnotateAssemblies():
     pass
 
 
+### Export indexed GTF files to export/indexed_gtfs.dir
+### The indexed mergeAllAssemblies and merge_by_tissue GTFs are also copied in export/
+
 @follows(mkdir("export/indexed_gtfs.dir"))
-@transform([mergeAllAssemblies,
-            assembleWithStringTie],
-           regex(".+/(.+).gtf.gz"),
-           r"export/indexed_gtfs.dir/\1.gtf.gz")
+@transform([assembleWithStringTie,
+            mergeAllAssemblies,
+            merge_by_tissue],
+           regex("(.+)/(.+).gtf.gz"),
+           r"export/indexed_gtfs.dir/\2.gtf.gz")
 def exportIndexedGTFs(infile, outfile):
 
     statement = '''zcat %(infile)s
                  | sort -k1,1 -k4,4n
                  | bgzip > %(outfile)s;
-
-                 
-                 tabix -p gff %(outfile)s'''
+                 tabix -p gff %(outfile)s;
+                 if [[ %(outfile)s == *"agg-agg-agg"* ]]; then cp %(outfile)s %(outfile)s.tbi export/; fi'''
 
     P.run(statement)
 
@@ -483,7 +487,6 @@ def exportIndexedGTFs(infile, outfile):
 @follows(exportIndexedGTFs)
 def export():
     pass
-
 
 # ---------------------------------------------------
 @follows(mkdir("salmon_index"),exportIndexedGTFs)
