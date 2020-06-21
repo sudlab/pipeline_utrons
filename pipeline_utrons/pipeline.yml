@@ -1,0 +1,114 @@
+################################################################
+#
+# Pipeline pipeline_utrons.py configuration file for sphinxreport
+#
+# This pipeline.ini file lists some configuration options that you might 
+# want a user to set automatically.
+#
+# Add pipeline specific options into separate sections
+#
+################################################################
+
+## general options
+
+
+# Project name
+projectname: ProjectUtron
+
+# Copyright statement
+copyright: Ian Sudbery (2016)
+
+# The short X.Y version.
+version: 0.1
+
+# The full version, including alpha/beta/rc tags.
+release: 0.1
+
+########################################################
+# the genome to use (UCSC convention)
+genome: hg38_noalt
+
+########################################################
+
+#Specify temporary directory in /fastdata, in order to avoid for certain files 
+#being created via commands through one node and deleted/moved by commands 
+#execute through a different node
+#tmpdir:/fastdata/$USER/tmp
+
+#or create a .cgat.yml file in your (home) ~ directory, in which you
+#specify the directory for temporary files
+
+#######################################################
+
+database:
+    name: /shared/sudlab1/General/projects/UTRONs/databases/brain/brain_utrons/csvdb
+    url: sqlite:////shared/sudlab1/General/projects/UTRONs/databases/brain/brain_utrons/csvdb
+
+    ################################################################
+    #
+    # Location of annotation database
+    #
+    ################################################################
+annotations:
+    database: /shared/sudlab1/General/annotations/hg38_noalt_ensembl85/csvdb
+
+    # directory with annotation information
+    dir: /shared/sudlab1/General/annotations/hg38_noalt_ensembl85
+    filtered_geneset: 
+
+    ################################################################
+    # Stringtie
+    ###############################################################
+
+stringtie:
+    #options for assembling with stringtie
+    threads: 2
+    options: -f 0.05
+    memory: 6G
+
+    merge_threads: 6
+    merge_memory: 24G
+    merge_options: -F 0 -T 1
+    groups: PR-AD, PR-AD-NO
+
+    #options for quantifying with stringtie
+    quant_threads: 4
+    quant_memory: 24G
+    quant_options: ''
+
+gtf2table:
+    classifier: classifier-rnaseq-splicing
+
+
+    ################################################################
+    #
+    # sphinxreport build options
+    #
+    ################################################################
+
+report:
+
+    # prefix to use for publishing the report from this pipeline
+    prefix: default
+
+    ###############################################################
+    # Portcullis  
+    # (docs - http://portcullis.readthedocs.io/en/latest/using.html)
+    ###############################################################
+
+portcullis:
+    #Fasta reference 
+    fastaref: /shared/sudlab1/General/mirror/ensembl/tcga_hg38/GRCh38.tcga.fa
+    # Reference of junctions in BED format
+    bedref: /shared/sudlab1/General/Data/projects/utrons/GRCh38_gencode28_annotation.bed
+
+    #################################################################
+    # Salmon
+    # (docs - https://salmon.readthedocs.io/en/latest/)
+    ################################################################
+
+salmon:
+    # Options for building the salmon index
+    indexoptions: --type quasi -k 31
+    # Options for quantifying samples
+    quantoptions: --validateMappings --rangeFactorizationBins 4
