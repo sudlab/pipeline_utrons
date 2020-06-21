@@ -5,10 +5,10 @@
 
 import sys
 
-from CGAT import Bed
-from CGAT import IndexedFasta
-from CGATCore import IOTools
-from CGAT import Genomics
+from cgat import Bed
+from cgat import IndexedFasta
+from cgatcore import iotools
+from cgat import Genomics
 
 
 # In[3]:
@@ -20,9 +20,9 @@ genome = IndexedFasta.IndexedFasta("/shared/sudlab1/General/mirror/genomes/plain
 # In[7]:
 
 
-bedfile = Bed.iterator(IOTools.open_file(sys.argv[1]))
+bedfile = Bed.iterator(iotools.open_file(sys.argv[1]))
 splice_site_dict = dict()
-outfile = IOTools.open_file(sys.argv[2], "w")
+outfile = iotools.open_file(sys.argv[2], "w")
 for utron in bedfile:
     
     ss5_sequence = genome.getSequence(utron.contig, "+", utron.start, utron.start+2)

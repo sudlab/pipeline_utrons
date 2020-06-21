@@ -33,12 +33,12 @@ Command line options
 '''
 
 import sys
-from CGATCore import Experiment as E
-import CGAT.GTF as GTF
-import CGAT.Bed as Bed
-import CGATCore.IOTools as IOTools
+from cgatcore import experiment as E
+import cgat.GTF as GTF
+import cgat.Bed as Bed
+import cgatcore.iotools as IOTools
 import itertools
-from CGATCore import Database as Database
+from cgatcore import database as Database
 
 import pandas
 

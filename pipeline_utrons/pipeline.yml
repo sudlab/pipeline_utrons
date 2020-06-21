@@ -54,7 +54,7 @@ annotations:
 
     # directory with annotation information
     dir: /shared/sudlab1/General/annotations/hg38_noalt_ensembl85
-    filtered_geneset: 
+
 
     ################################################################
     # Stringtie
@@ -102,6 +102,8 @@ portcullis:
     # Reference of junctions in BED format
     bedref: /shared/sudlab1/General/Data/projects/utrons/GRCh38_gencode28_annotation.bed
 
+    orientation: FR  
+  
     #################################################################
     # Salmon
     # (docs - https://salmon.readthedocs.io/en/latest/)

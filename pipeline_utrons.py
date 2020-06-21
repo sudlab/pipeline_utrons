@@ -161,12 +161,12 @@ from gffutils import DataIterator as DataIterator
 import sqlite3
 import subprocess
 import glob
-from CGATCore import Experiment as E
-import CGAT.Sra as Sra
-from CGATCore import Pipeline as P
-import CGATPipelines.PipelineRnaseq as RnaSeq
+from cgatcore import experiment as E
+import cgat.Sra as Sra
+from cgatcore import pipeline as P
+import cgatpipelines.tasks.rnaseq as RnaSeq
 import tempfile
-from CGATPipelines.Report import run_report
+from cgatpipelines.report import run_report
 
 # load options from the config file
 PARAMS = P.get_parameters(
@@ -242,10 +242,10 @@ def assembleWithStringTie(infiles, outfile):
     
     statement =  '''
                     portcullis full 
-                            -t 1
+			    -t 1
                             -o portcullis/%(basefile)s/
                             -r %(portcullis_bedref)s
-                            -b 
+                            -b
                             %(portcullis_fastaref)s
                             %(infile)s &&
                     mv portcullis/%(basefile)s/portcullis.filtered.bam %(tmpfile)s &&
@@ -281,7 +281,7 @@ def assembleWithStringTie(infiles, outfile):
              statement,
              "rm -r %(tmpfilename)s"])
 
-    P.run(statement)
+    P.run(statement, job_condaenv="portcullis")
 
 
 # ---------------------------------------------------
@@ -410,17 +410,16 @@ def find_utrons(infiles, outfiles):
     all_out, part_out, novel_out = outfiles
 
     track = P.snip(all_out, ".all_utrons.bed.gz")
-    current_file = __file__
+    current_file = __file__ 
     pipeline_path = os.path.abspath(current_file)
     pipeline_directory = os.path.dirname(pipeline_path)
     script_path = "pipeline_utrons/find_utrons.py"
-    find_utrons_path = os.path.join(pipeline_directory, script_path)
-
+    full_utron_path = os.path.join(pipeline_directory, script_path)  
     statement = '''cgat gtf2gtf -I %(infile)s
                              --method=sort
                              --sort-order=gene+transcript
                               -L %(track)s.log
-                 | python %(find_utrons_path)s
+                 | python full_utron_path 
                              --reffile=%(reference)s
                              --class-file=%(classfile)s
                              --outfile %(all_out)s
@@ -641,18 +640,13 @@ def mergeAllQuants(infiles, outfile):
 ###### Export all_utrons, novel_utrons ids and tx2gene text files from utrons database
 
 @follows(mergeAllQuants, mkdir("expression.dir", "expression.dir/csvdb_files"))
-@transform(PARAMS["database_name"],
-         formatter(),
-         ["expression.dir/csvdb_files/tx2gene.txt", "expression.dir/csvdb_files/all_utrons_ids.txt", "expression.dir/csvdb_files/partnered_utrons_ids.txt", "expression.dir/csvdb_files/novel_utrons_ids.txt"])
-def CSVDBfiles(infile, outfiles):
+def CSVDBfiles():
     '''utility function to connect to database.
 
     Use this method to connect to the pipeline database.
     Export all_utrons_ids, novel_utrons_ids and tx2gene data in :term:`txt` format
     to be used further on in the Rscript
     '''
-
-    tx2gene, all_ids, partnered_ids, novel_ids = outfiles
 
     subprocess.call(["sqlite3", PARAMS["database_name"],
                      ".headers on", ".mode tab", ".output expression.dir/csvdb_files/tx2gene.txt",
@@ -675,17 +669,17 @@ def CSVDBfiles(infile, outfiles):
 ###### Identify splice sites
 
 @follows(find_utrons, mergeAllAssemblies, mergeAllQuants)
-@subdivide(find_utrons, regex("(.+)/agg-agg-agg.(.+)_utrons.bed.gz"), [r"expression.dir/\2_splice_sites.txt", r"database_load/\2_splice_sites.load"])
+@transform("utron_beds.dir/*.bed.gz", regex("(.+)/agg-agg-agg.(.+)_utrons.bed.gz"), [r"expression.dir/\2_splice_sites.txt", r"database_load/\2_splice_sites.load"])
 def identify_splice_sites(infiles, outfiles):
     infile=infiles
     outfile, outfile_load = outfiles
-    current_file = __file__
-    pipeline_path = os.path.abspath(current_file)
-    pipeline_directory = os.path.dirname(pipeline_path)
-    script_path = "pipeline_utrons/splicesites_start_end_sizes.py"
-    ss_path = os.path.join(pipeline_directory, script_path)
+    #current_file = __file__
+    #pipeline_path = os.path.abspath(current_file)
+    #pipeline_directory = os.path.dirname(pipeline_path)
+    #script_path = "/splicesites_start_end_sizes.py"
+    #full_utron_path = os.path.join(pipeline_directory, script_path)
 
-    statement = ''' python %(ss_path)s %(infile)s %(outfile)s;
+    statement = ''' python /shared/sudlab1/General/projects/Greg/pipelines/pipeline_utrons/splicesites_start_end_sizes.py %(infile)s %(outfile)s;
                     sort -u %(outfile)s > %(outfile)s_2.txt; rm %(outfile)s; mv %(outfile)s_2.txt %(outfile)s;
                     sed -i $'1i transcript_id\\tstrand\\tss5\\tss3\\tcontig\\tsplice_site_start\\tsplice_site_end\\tutron_size' %(outfile)s '''
     P.run(statement)   
@@ -717,21 +711,21 @@ def gtf_stop_codons(infile, gtf):
 def utrons_expression(infiles, outfiles):
     outfile_load, partnered_load, novel_load = outfiles
     job_threads = 4
-    job_memory = "64G"
+    job_memory = "48G"
     
     outfile = "expression.dir/utrons_expression.txt"
-    current_file = __file__
-    pipeline_path = os.path.abspath(current_file)
-    pipeline_directory = os.path.dirname(pipeline_path)
-    script_path = "pipeline_utrons/utrons_Rscript.R"
-    utrons_Rscript_path = os.path.join(pipeline_directory, script_path)
-
     if not os.path.isfile(outfile):
-        statement = ''' Rscript %(utrons_Rscript_path)s '''
+        statement = ''' Rscript /shared/sudlab1/General/projects/UTRONs/MyFiles/scripts/utrons_Rscript.R '''
         P.run(statement)
     else:
         pass
-    
+#        if not os.path.isfile(outfile):
+#            statement = ''' echo -e '#!/data/mb1cna/cgat/envs/sharc/bin/Rscript\nload(file = "expression.dir/data.RData")\nwrite.table(mdata, "expression.dir/utrons_expression.txt", sep = "\\t", row.names = FALSE, quote = FALSE)' > expression.dir/Rscript.R;
+#                         Rscript expression.dir/Rscript.R;
+#                         rm expression.dir/Rscript.R '''
+#            P.run(statement)
+#        else:
+#            pass
     P.load(outfile, outfile_load, options = "-i Sample -i transcript_id -i gene_id -i tr_expr -i gene_expr -i fract_expr", job_memory="16G")
 
     partnered = "expression.dir/partnered_utrons_expression.txt"
