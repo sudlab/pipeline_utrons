@@ -56,7 +56,7 @@ def getGeneTable(reffile):
             transcript_id = transcript[0].transcript_id
             table[geneid]["models"][transcript_id] = transcript
             
-            CDS = GTF.asRanges(transcript, "CDS")
+            CDS = GTF.asRanges(transcript, "start_codon")
             if len(CDS) == 0:
                 continue
 
@@ -152,16 +152,24 @@ def main(argv=None):
         if len(filtered_starts) == 0:
             continue
         
-        if novel_transcript[0].strand == "-":
-            selected_start = max(filtered_starts)
-        else:
-            selected_start = min(filtered_starts)
+        #if novel_transcript[0].strand == "-":
+        #    selected_start = max(filtered_starts)
+        #else:
+        #    selected_start = min(filtered_starts)
 
-        if novel_transcript[0].transcript_id == "ENST00000399807":
-            E.debug("Select start = %s" % selected_start)
+        selected_models = list()
+        for startc in filtered_starts:
+            selected_models.extend(ens_gene["start_codons"][startc])
             
-        for ref_transcript_id in ens_gene["start_codons"][selected_start]:
-            output = ref_transcript == novel_transcript == "ENST00000399807"
+        if novel_transcript[0].transcript_id == "ENST00000343518":
+            E.debug("Select start = %s" % filtered_starts)
+            E.debug("Selected transcripts = %s" %selected_models)
+            
+        for ref_transcript_id in selected_models:
+            
+            output = ref_transcript_id == novel_transcript[0].transcript_id and \
+                     novel_transcript[0].transcript_id == "ENST00000343518"
+            if output: E.debug("Found transcript")
             
             second = ens_gene["models"][ref_transcript_id]
             ens_CDS = GTF.asRanges(second, "CDS")
@@ -240,12 +248,12 @@ def main(argv=None):
             if second[0].strand == "+":
                 ens_stop = ens_CDS[-1][1]
                 UTR3introns = [intron for intron in firstUTRintrons if
-                               intron[0] > ens_CDS[-1][1] and
+                               intron[0] >= ens_CDS[-1][1] and
                                intron[1] < ens_exons[-1][1]]
             else:
                 ens_stop = ens_CDS[0][0]
                 UTR3introns = [intron for intron in firstUTRintrons if
-                               intron[1] < ens_CDS[0][0] and
+                               intron[1] <= ens_CDS[0][0] and
                                intron[0] > ens_exons[0][0]]
 
             if UTR3introns == []:
