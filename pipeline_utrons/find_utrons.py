@@ -39,15 +39,35 @@ import cgat.Bed as Bed
 import cgatcore.iotools as IOTools
 import itertools
 from cgatcore import database as Database
-
+from collections import defaultdict
 import pandas
 
 
 def getGeneTable(reffile):
-    table = dict()
+    E.info("Loading reference")
+    table = defaultdict(dict)
     for ens_gene in GTF.gene_iterator(GTF.iterator(IOTools.open_file(reffile))):
         geneid = ens_gene[0][0].gene_id
-        table[geneid] = ens_gene
+        table[geneid]["models"] = dict()
+        table[geneid]["start_codons"] = defaultdict(list)
+        
+        for transcript in ens_gene:
+
+            transcript_id = transcript[0].transcript_id
+            table[geneid]["models"][transcript_id] = transcript
+            
+            CDS = GTF.asRanges(transcript, "CDS")
+            if len(CDS) == 0:
+                continue
+
+            if transcript[0].strand == "-":
+                start_codon = max(e[1] for e in CDS)
+            else:
+                start_codon = min(e[0] for e in CDS)
+
+            table[geneid]["start_codons"][start_codon].append(transcript_id)
+
+    E.info("Reference Loaded")
     return table
 
 
@@ -93,171 +113,203 @@ def main(argv=None):
 
     db = pandas.read_csv(options.classfile, sep="\t")
 
-    db = db.groupby("transcript_id").first()
-
+    # This keeps just one entry per-transcript - why? 
+    #db = db.groupby("transcript_id").first()
+    db = db.set_index("transcript_id")
     enshashtable = getGeneTable(options.reffile)
     
-    for gene in GTF.gene_iterator(GTF.iterator(options.stdin)):
-   
-        transcript_ids = [transcript[0].transcript_id for transcript in gene]
+    for novel_transcript in GTF.transcript_iterator(GTF.iterator(options.stdin)):
+
+        # Why do it on a gene by gene basis rather than transcript by transcript basis?
+        transcript_id = novel_transcript[0].transcript_id
 
         try:
-            geneids = set(db.loc[transcript_ids].match_gene_id.dropna())
+            geneid = db.loc[transcript_id].match_gene_id
         except KeyError:
             continue
+
+        if pandas.isnull(geneid):
+            continue
+
+        ens_gene = enshashtable[geneid]
+            
+        all_ref_introns = set()
+        novel_transcript_exons = GTF.asRanges(novel_transcript, "exon")
+        novel_transcript_introns = GTF.toIntronIntervals(novel_transcript)      
+        for ref_transcript in ens_gene["models"].values():
+            ref_introns = GTF.toIntronIntervals(ref_transcript)
+            all_ref_introns.update(ref_introns)
+
+
+        #Identify comparison set
+        def _in_exon(position, exons):
+            return any(e[0] <= position <= e[1] for e in exons)
+
+        # check if this ever gets the wrong start_codon. 
+        filtered_starts = [s for s in ens_gene["start_codons"] if
+                           _in_exon(s, novel_transcript_exons)]
+
+        if len(filtered_starts) == 0:
+            continue
         
-        geneids.discard(None)
+        if novel_transcript[0].strand == "-":
+            selected_start = max(filtered_starts)
+        else:
+            selected_start = min(filtered_starts)
 
-        for geneid in geneids:  # get ensembl gene object from hashtable
+        if novel_transcript[0].transcript_id == "ENST00000399807":
+            E.debug("Select start = %s" % selected_start)
+            
+        for ref_transcript_id in ens_gene["start_codons"][selected_start]:
+            output = ref_transcript == novel_transcript == "ENST00000399807"
+            
+            second = ens_gene["models"][ref_transcript_id]
+            ens_CDS = GTF.asRanges(second, "CDS")
+            
+            if len(ens_CDS) == 0:  # ensure only protein-coding transcripts
+                continue
 
-            ens_gene = enshashtable[geneid]
+            ens_exons = GTF.asRanges(second, "exon")
+            
+            first_introns = set(novel_transcript_introns)
+            second_introns = set(GTF.toIntronIntervals(second))
 
-            ens_introns = set()
-            for transcript in ens_gene:
-                ens_introns.update(GTF.toIntronIntervals(transcript))
+            first_CDSintrons = [intron for intron in first_introns if
+                                (intron[0] > ens_CDS[0][0] and
+                                 intron[1] < ens_CDS[-1][1])]
 
-            for first, second in itertools.product(gene, ens_gene):
+            second_CDSintrons = [intron for intron in second_introns if
+                                 (intron[0] > ens_CDS[0][0] and
+                                  intron[1] < ens_CDS[-1][1])]
 
-                ens_CDS = GTF.asRanges(second, "CDS")
-                if len(ens_CDS) == 0:  # ensure only protein-coding transcripts
-                    continue
-                ens_exons = GTF.asRanges(second, "exon")
+            first_CDSintrons = set(first_CDSintrons)
+            second_CDSintrons = set(second_CDSintrons)
 
-                if second[0].strand == "+":
-                    if first[0].start > ens_CDS[0][0]:
-                        # ensure pruned transcript starts before ensembl CDS
-                        continue
-                else:
-                    if first[-1].end < ens_CDS[-1][1]:
-                        continue
+            if not first_CDSintrons == second_CDSintrons:
+                continue                           # match CDS intron chain
 
-                first_introns = set(GTF.toIntronIntervals(first))
-                second_introns = set(GTF.toIntronIntervals(second))
+            if output: E.debug ("CDS intron chains match")
+            
+            firstUTRintrons = first_introns - first_CDSintrons
 
-                first_CDSintrons = [intron for intron in first_introns if
-                                    (intron[0] > ens_CDS[0][0] and
-                                     intron[1] < ens_CDS[-1][1])]
+            if len(firstUTRintrons) == 0:
+                continue
 
-                second_CDSintrons = [intron for intron in second_introns if
-                                     (intron[0] > ens_CDS[0][0] and
-                                      intron[1] < ens_CDS[-1][1])]
+            if output: E.debug("There are UTR introns")
+            
+            secondUTRintrons = second_introns - second_CDSintrons
 
-                first_CDSintrons = set(first_CDSintrons)
-                second_CDSintrons = set(second_CDSintrons)
+            if second[0].strand == "+":
+                firstUTR5introns = set([intron for intron in firstUTRintrons
+                                        if intron[1] <= ens_CDS[0][0]])
+                secondUTR5introns = set([intron for intron in secondUTRintrons 
+                                         if intron[1] <= ens_CDS[0][0]])
 
-                if not (len(first_CDSintrons - second_CDSintrons) == 0 and
-                        len(second_CDSintrons - first_CDSintrons) == 0):
-                    continue                           # match CDS intron chain
-
-                firstUTRintrons = first_introns - first_CDSintrons
-
-                if len(firstUTRintrons) == 0:
-                    continue
-                
-                secondUTRintrons = second_introns - second_CDSintrons
-
-                if second[0].strand == "+":
-                    firstUTR5introns = set([intron for intron in firstUTRintrons
-                                            if intron[1] < ens_CDS[0][0]])
-                    secondUTR5introns = set([intron for intron in secondUTRintrons 
-                                             if intron[1] < ens_CDS[0][0]])
-                    if not ((first[0].start >= ens_exons[0][0]) or 
-                            (len(firstUTR5introns-secondUTR5introns) == 0 and
-                             len(secondUTR5introns-firstUTR5introns) == 0)):
-                        continue                # ensure pruned transcript either
+                ## Don't think this following is neccessary any more. 
+                #if not ((first[0].start >= ens_exons[0][0]) or 
+                #        (len(firstUTR5introns-secondUTR5introns) == 0 and
+                #         len(secondUTR5introns-firstUTR5introns) == 0)):
+                #    continue                # ensure pruned transcript either
         # starts at same place or after ensembl transcript or has matching 5'UTR introns
-                else: 
-                    firstUTR5introns = set([intron for intron in firstUTRintrons 
-                                            if intron[0] > ens_CDS[-1][1]])
-                    secondUTR5introns = set([intron for intron in secondUTRintrons 
+            else: 
+                firstUTR5introns = set([intron for intron in firstUTRintrons 
+                                        if intron[0] > ens_CDS[-1][1]])
+                secondUTR5introns = set([intron for intron in secondUTRintrons 
                                              if intron[0] > ens_CDS[-1][1]])
-                    if not ((first[-1].end <= ens_exons[-1][1]) or
-                            (len(firstUTR5introns-secondUTR5introns) == 0 and
-                             len(secondUTR5introns-firstUTR5introns) == 0)):
-                        continue
 
-                for intron in firstUTRintrons:
-                    if (intron[0] < ens_CDS[-1][1] and
-                       intron[1] > ens_CDS[-1][1]) or \
-                       (intron[0] < ens_CDS[0][0] and
-                       intron[1] > ens_CDS[0][0]):
-                        
-                        continue        # ensure pruned transcript doesn't have
+                ## Don't think the following is neccesary any more
+                #if not ((first[-1].end <= ens_exons[-1][1]) or
+                #        (len(firstUTR5introns-secondUTR5introns) == 0 and
+                #         len(secondUTR5introns-firstUTR5introns) == 0)):
+                #    continue
+
+            found = False
+            for intron in first_introns:
+                if (intron[0] < ens_CDS[-1][1] and
+                    intron[1] > ens_CDS[-1][1]) or \
+                    (intron[0] < ens_CDS[0][0] and
+                     intron[1] > ens_CDS[0][0]):
+
+                    found=True
+                    break      # ensure pruned transcript doesn't have
                         # introns overlapping start or stop codons in ensembl
                         # transcript
-                
-                if second[0].strand == "+":
-                    ens_stop = ens_CDS[-1][1]
-                    UTR3introns = [intron for intron in firstUTRintrons if
-                                   intron[0] > ens_CDS[-1][1] and
-                                   intron[1] < ens_exons[-1][1]]
-                else:
-                    ens_stop = ens_CDS[0][0]
-                    UTR3introns = [intron for intron in firstUTRintrons if
-                                   intron[1] < ens_CDS[0][0] and
-                                   intron[0] > ens_exons[0][0]]
+            if found and output: E.debug("start or stop in intron")
+            if found: continue
+            
+            if second[0].strand == "+":
+                ens_stop = ens_CDS[-1][1]
+                UTR3introns = [intron for intron in firstUTRintrons if
+                               intron[0] > ens_CDS[-1][1] and
+                               intron[1] < ens_exons[-1][1]]
+            else:
+                ens_stop = ens_CDS[0][0]
+                UTR3introns = [intron for intron in firstUTRintrons if
+                               intron[1] < ens_CDS[0][0] and
+                               intron[0] > ens_exons[0][0]]
 
-                if UTR3introns == []:
-                    continue
+            if UTR3introns == []:
+                continue
 
-                outbed = Bed.Bed()
-                outbed.fields = ['.', '.', '.', '.', '.', '.', '.', '.', '.']
-                outbed.fromIntervals(UTR3introns)
-                outbed.contig = gene[0][0].contig
-                outbed["name"] = first[0].transcript_id
-                outbed["strand"] = gene[0][0].strand
-                outlines.append(outbed)        # get output for each transcript
+            outbed = Bed.Bed()
+            outbed.fields = ['.', '.', '.', '.', '.', '.', '.', '.', '.']
+            outbed.fromIntervals(UTR3introns)
+            outbed.contig = novel_transcript[0].contig
+            outbed["name"] = novel_transcript[0].transcript_id
+            outbed["strand"] = novel_transcript[0].strand
+            outlines.append(outbed)        # get output for each transcript
                     
-                for item in UTR3introns:
-                    outbed2 = Bed.Bed()
-                    outbed2.fields = ['.', '.', '.', '.']
-                    outbed2.fromIntervals([item])
-                    outbed2.contig = gene[0][0].contig
-                    outbed2['name'] = first[0].transcript_id
-                    outbed2["strand"] = gene[0][0].strand
-                    outbed2["thickStart"] = ens_stop
-                    individuals.append(outbed2)  # get output for each intron
+            for item in UTR3introns:
+                outbed2 = Bed.Bed()
+                outbed2.fields = ['.', '.', '.', '.']
+                outbed2.fromIntervals([item])
+                outbed2.contig = novel_transcript[0].contig
+                outbed2['name'] = novel_transcript[0].transcript_id
+                outbed2["strand"] = novel_transcript[0].strand
+                outbed2["thickStart"] = ens_stop
+                individuals.append(outbed2)  # get output for each intron
           
-                UTR3introns = set(UTR3introns)
-                extraUTR3introns = list(UTR3introns - secondUTRintrons)
-                # get only introns that are not in matched transcript
-                if len(extraUTR3introns) != 0:
-                    outbed3 = Bed.Bed()
-                    outbed3.fields = ['.'] * 9
-                    outbed3.fromIntervals(extraUTR3introns)
-                    outbed3.contig = gene[0][0].contig
-                    outbed3["name"] = first[0].transcript_id + ":" + second[0].transcript_id
-                    outbed3["strand"] = gene[0][0].strand
-                    partnered.append(outbed3)
-                        
-                    for item in extraUTR3introns:
-                        outbed4 = Bed.Bed()
-                        outbed4.fields = ['.', '.', '.', '.']
-                        outbed4.fromIntervals([item])
-                        outbed4.contig = gene[0][0].contig
-                        outbed4["name"] = first[0].transcript_id + ":" + second[0].transcript_id
-                        outbed4["strand"] = gene[0][0].strand
-                        outbed4["thickStart"] = ens_stop
-                        individualpartnered.append(outbed4)
-                
-                if len(ens_introns) == 0:
-                    ens_starts, ens_ends = [], []
-                else:
-                    ens_starts, ens_ends = zip(*ens_introns)
+            UTR3introns = set(UTR3introns)
+            extraUTR3introns = list(UTR3introns - secondUTRintrons)
 
-                novelEvents = [i for i in UTR3introns if
-                               i[0] not in ens_starts and
-                               i[1] not in ens_ends]
+            # get only introns that are not in matched transcript
+            if len(extraUTR3introns) != 0:
+                outbed3 = Bed.Bed()
+                outbed3.fields = ['.'] * 9
+                outbed3.fromIntervals(extraUTR3introns)
+                outbed3.contig = novel_transcript[0].contig
+                outbed3["name"] = novel_transcript[0].transcript_id + ":" + second[0].transcript_id
+                outbed3["strand"] = novel_transcript[0].strand
+                partnered.append(outbed3)
+                        
+                for item in extraUTR3introns:
+                    outbed4 = Bed.Bed()
+                    outbed4.fields = ['.', '.', '.', '.']
+                    outbed4.fromIntervals([item])
+                    outbed4.contig = novel_transcript[0].contig
+                    outbed4["name"] = novel_transcript[0].transcript_id + ":" + second[0].transcript_id
+                    outbed4["strand"] = novel_transcript[0].strand
+                    outbed4["thickStart"] = ens_stop
+                    individualpartnered.append(outbed4)
                 
-                for item in novelEvents:
-                    outbed5 = Bed.Bed()
-                    outbed5.fields = ['.']*4
-                    outbed5.fromIntervals([item])
-                    outbed5.contig = gene[0][0].contig
-                    outbed5["name"] = first[0].transcript_id + ":" + second[0].transcript_id
-                    outbed5["strand"] = gene[0][0].strand
-                    outbed5["thickStart"] = ens_stop
-                    novel.append(outbed5)
+            if len(all_ref_introns) == 0:
+                ens_starts, ens_ends = [], []
+            else:
+                ens_starts, ens_ends = zip(*all_ref_introns)
+
+            novelEvents = [i for i in UTR3introns if
+                           i[0] not in ens_starts and
+                           i[1] not in ens_ends]
+                
+            for item in novelEvents:
+                outbed5 = Bed.Bed()
+                outbed5.fields = ['.']*4
+                outbed5.fromIntervals([item])
+                outbed5.contig = novel_transcript[0].contig
+                outbed5["name"] = novel_transcript[0].transcript_id + ":" + second[0].transcript_id
+                outbed5["strand"] = novel_transcript[0].strand
+                outbed5["thickStart"] = ens_stop
+                novel.append(outbed5)
 
     with IOTools.open_file(options.outfile, "w") as outf:
         for line in outlines:
