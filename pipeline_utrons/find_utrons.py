@@ -281,7 +281,7 @@ def main(argv=None):
             extraUTR3introns = list(UTR3introns - secondUTRintrons)
 
             # get only introns that are not in matched transcript
-            if len(extraUTR3introns) != 0 and len(secondUTRintrons - UTR3introns):
+            if len(extraUTR3introns) != 0 and len(secondUTRintrons - UTR3introns) == 0:
                 outbed3 = Bed.Bed()
                 outbed3.fields = ['.'] * 9
                 outbed3.fromIntervals(extraUTR3introns)
