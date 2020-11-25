@@ -282,7 +282,7 @@ def assembleWithStringTie(infiles, outfile):
              statement,
              "rm -r %(tmpfilename)s"])
 
-#    P.run(statement, job_condaenv="portcullis") <-- caused error as no env exists, removed 25/11/2020 Jack Riley
+    P.run(statement) # job_condaenv="portcullis" kwarg <-- caused error as no env exists, removed 25/11/2020 Jack Riley
 
 
 # ---------------------------------------------------
