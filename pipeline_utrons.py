@@ -30,6 +30,7 @@ Pipeline template
 :Date: |today|
 :Tags: Python
 :Updated for usage with python3 by: Cristina Alexandru
+:Updated 24/11/2020 by Jack Riley to remove references to deprecated cgatpipelines.report module. Commented out lines: 170, 776-806
 
 Overview
 ========
@@ -166,7 +167,7 @@ import cgat.Sra as Sra
 from cgatcore import pipeline as P
 import cgatpipelines.tasks.rnaseq as RnaSeq
 import tempfile
-from cgatpipelines.report import run_report
+# from cgatpipelines.report import run_report
 
 # load options from the config file
 PARAMS = P.get_parameters(
@@ -772,37 +773,37 @@ def renderMultiqc(infile):
 
 ################################################### added #
 
-@follows(mkdir("report"))
-def build_report():
-    '''build report from scratch.
-
-    Any existing report will be overwritten.
-    '''
-
-    E.info("starting report build process from scratch")
-    run_report(clean=True)
-
-
-@follows(mkdir("report"))
-def update_report():
-    '''update report.
-
-    This will update a report with any changes inside the report
-    document or code. Note that updates to the data will not cause
-    relevant sections to be updated. Use the cgatreport-clean utility
-    first.
-    '''
-
-    E.info("updating report")
-    run_report(clean=False)
+#@follows(mkdir("report"))
+#def build_report():
+#    '''build report from scratch.
+#
+#   Any existing report will be overwritten.
+#    '''
+#
+#    E.info("starting report build process from scratch")
+#    run_report(clean=True)
 
 
-@follows(update_report)
-def publish_report():
-    '''publish report in the CGAT downloads directory.'''
+#@follows(mkdir("report"))
+#def update_report():
+#    '''update report.
+#
+#    This will update a report with any changes inside the report
+#    document or code. Note that updates to the data will not cause
+#    relevant sections to be updated. Use the cgatreport-clean utility
+#    first.
+#    '''
+#
+#    E.info("updating report")
+#    run_report(clean=False)
 
-    E.info("publishing report")
-    P.publish_report()
+
+#@follows(update_report)
+#def publish_report():
+#    '''publish report in the CGAT downloads directory.'''
+#
+#    E.info("publishing report")
+#    P.publish_report()
 
 
 def main(argv=None):
