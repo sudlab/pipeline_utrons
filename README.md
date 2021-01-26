@@ -15,10 +15,6 @@
 2. A transcriptome in .fa format, in order to build a salmon index.
 3. RNA-seq reads in fastq.1.gz and fastq.2.gz formats, for generating salmon quantification files in .sf format.
 
-## For accessing the pipeline through cgatflow command
-Clone/download the repository folder `updated_pipeline_utrons` (this is the updated version of the pipeline_utrons, for usage with python3).
-Copy the contents of `updated_pipeline_utrons` directory to your `cgat/cgat-flow/CGATPipelines/`.
-
 The updated `GenomeAnalysis.pyx` and `IndexedGenome.py` should replace the old versions in `cgat/cgat-apps/CGAT`.
 
 ## Configuration
