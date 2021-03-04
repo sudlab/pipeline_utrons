@@ -101,6 +101,8 @@ def main(argv=None):
                       help="Supply output bed file name for individual partnered utrons")
     parser.add_option("-n", "--novel-file", dest="novelfile", type="string",
                       help="Supply output bed file name for novel introns")
+    parser.add_option("-c", "--not-cds-outfile", dest="not_cds_file", type="string",
+                      help="Outfile for introns that overlap CDS in no transcripts")
     parser.add_option("--novel-transcript", dest="novel_id", type="string",
                       help="DEBUG: Output info for this transcript from the STDIN")
     parser.add_option("--target-transcript", dest="target_id", type="string",
@@ -114,6 +116,7 @@ def main(argv=None):
     partnered = []
     individualpartnered = []
     novel = []
+    not_cds_utrons = []
 
     db = pandas.read_csv(options.classfile, sep="\t")
 
@@ -147,12 +150,21 @@ def main(argv=None):
         ens_gene = enshashtable[geneid]
             
         all_ref_introns = set()
+        all_ref_cds_introns = set()
         novel_transcript_exons = GTF.asRanges(novel_transcript, "exon")
         novel_transcript_introns = GTF.toIntronIntervals(novel_transcript)      
         for ref_transcript in ens_gene["models"].values():
             ref_introns = GTF.toIntronIntervals(ref_transcript)
             all_ref_introns.update(ref_introns)
 
+            ref_cds = GTF.asRanges(ref_transcript, "CDS")
+            if len(ref_cds) == 0:
+                continue
+
+            ref_cds_introns = [intron for intron in ref_introns if
+                               (intron[0] > ref_cds[0][0] and
+                                intron[1] < ref_cds[-1][1])]
+            all_ref_cds_introns.update(ref_cds_introns)
 
         #Identify comparison set
         def _in_exon(position, exons):
@@ -333,6 +345,25 @@ def main(argv=None):
                 outbed5["thickStart"] = ens_stop
                 novel.append(outbed5)
 
+            if len(all_ref_cds_introns) == 0:
+                cds_starts, cds_ends = [], []
+            else:
+                cds_starts, cds_ends = zip(*all_ref_cds_introns)
+
+            not_cds_events = [i for i in UTR3introns if
+                              i[0] not in cds_starts and
+                              i[1] not in cds_ends]
+                
+            for item in not_cds_events  :
+                outbed6 = Bed.Bed()
+                outbed6.fields = ['.']*4
+                outbed6.fromIntervals([item])
+                outbed6.contig = novel_transcript[0].contig
+                outbed6["name"] = novel_transcript[0].transcript_id + ":" + second[0].transcript_id
+                outbed6["strand"] = novel_transcript[0].strand
+                outbed6["thickStart"] = ens_stop
+                not_cds_utrons.append(outbed6)
+
     with IOTools.open_file(options.outfile, "w") as outf:
         for line in outlines:
             outf.write(str(line)+"\n")
@@ -356,6 +387,12 @@ def main(argv=None):
         with IOTools.open_file(options.novelfile, "w") as outf5:
             for line in novel:
                 outf5.write(str(line)+"\n")
+
+    if options.not_cds_file is not None:
+        with IOTools.open_file(options.not_cds_file, "w") as outf6:
+            for line in not_cds_utrons:
+                outf6.write(str(line)+"\n")
+
     # write footer and output benchmark information.
     E.stop()
 
