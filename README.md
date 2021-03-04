@@ -15,22 +15,18 @@
 2. A transcriptome in .fa format, in order to build a salmon index.
 3. RNA-seq reads in fastq.1.gz and fastq.2.gz formats, for generating salmon quantification files in .sf format.
 
-## For accessing the pipeline through cgatflow command
-Clone/download the repository folder `updated_pipeline_utrons` (this is the updated version of the pipeline_utrons, for usage with python3).
-Copy the contents of `updated_pipeline_utrons` directory to your `cgat/cgat-flow/CGATPipelines/`.
-
 The updated `GenomeAnalysis.pyx` and `IndexedGenome.py` should replace the old versions in `cgat/cgat-apps/CGAT`.
 
 ## Configuration
 The pipeline requires a configured :file: `pipeline.yml` file.
 
 Make a directory with your project name.
-Configure the pipeline with `cgatflow utrons config`.
+Configure the pipeline with `python [path_to_repo]/pipeline_utrons.py config`.
 A pipeline.log and pipeline.yml file(s) will be added to your new directory.
 Modify the pipeline.yml according to your project (specify annotation database and directory, database for uploading the outputs; specify options for Salmon quantification).
 
 ## Pipeline use
-Run the pipeline with `cgatflow utrons make full`.
+Run the pipeline with `python [path_to_repo]/pipeline_utrons.py config make full`.
 
 For running the pipeline on a large set of samples, submit the pipeline onto the cluster (sharc), using a submit_pipeline_cgtaflow custom script.
 
