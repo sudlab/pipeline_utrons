@@ -420,7 +420,7 @@ def find_utrons(infiles, outfiles):
                              --method=sort
                              --sort-order=gene+transcript
                               -L %(track)s.log
-                 | python full_utron_path 
+                 | python %(full_utron_path)s 
                              --reffile=%(reference)s
                              --class-file=%(classfile)s
                              --outfile %(all_out)s
@@ -485,8 +485,8 @@ def exportIndexedGTFs(infile, outfile):
 
     statement = '''zcat %(infile)s
                  | sort -k1,1 -k4,4n
-                 | bgzip > %(outfile)s;
-                 tabix -p gff %(outfile)s;
+                 | bgzip > %(outfile)s &&
+                 tabix -f -p gff %(outfile)s &&
                  if [[ %(outfile)s == *"agg-agg-agg"* ]]; then cp %(outfile)s %(outfile)s.tbi export/; fi'''
 
     P.run(statement)
@@ -498,7 +498,7 @@ def export():
 
 
 # ---------------------------------------------------
-@follows(mkdir("salmon_index"),exportIndexedGTFs)
+@follows(mkdir("salmon_index"), mkdir("salmon_index/DAT"),exportIndexedGTFs)
 @transform("final_genesets.dir/agg-agg-agg.gtf.gz",
            formatter(),
            "salmon_index/{basename[0]}.salmon.index")
@@ -513,17 +513,34 @@ def makeSalmonIndex(infile,outfile):
     index_options=PARAMS["salmon_indexoptions"]
     tmpfile = P.get_temp_filename()
     
+    #statement prior to salmon v1.0 update
+    # statement = '''
+    # gunzip -c %(infile)s > %(tmpfile)s;
+    # gffread %(tmpfile)s -g %(fastaref)s -w %(transcript_fasta)s;
+    # salmon index
+    #   -p %(job_threads)s
+    #   %(index_options)s
+    #   -t %(transcript_fasta)s
+    #   -i %(outfile)s
+    #   --perfectHash;
+    # rm %(tmpfile)s
+    # '''
 
-
+    #statement since salmon >v1.0 Selective Alignment update
+    #statement now generates decoy.txt from reference genome, and concats the genome.fa and transcriptome.fa into gentrome.fa
+    #gentrome.fa is then passed through salmon alongside the decoys to create decoy-aware transcriptome (DAT)
     statement = '''
     gunzip -c %(infile)s > %(tmpfile)s;
     gffread %(tmpfile)s -g %(fastaref)s -w %(transcript_fasta)s;
+    grep "^>" <%(fastaref)s | cut -d " " -f 1 > salmon_index/DAT/decoys.txt;
+    sed -i.bak -e 's/>//g' salmon_index/DAT/decoys.txt; 
+    cat %(transcript_fasta)s %(fastaref)s > salmon_index/DAT/gentrome.fa.gz;
     salmon index
       -p %(job_threads)s
       %(index_options)s
-      -t %(transcript_fasta)s
-      -i %(outfile)s
-      --perfectHash;
+      -t salmon_index/DAT/gentrome.fa.gz
+      -d salmon_index/DAT/decoys.txt
+      -i %(outfile)s;
     rm %(tmpfile)s
     '''
     P.run(statement)

@@ -30,6 +30,10 @@ Command line options
 
 '''
 
+#pass in utrons bed on st_in
+#also give bam file as the arg
+
+
 import sys
 import cgatcore.experiment as E
 from cgatcore import iotools
