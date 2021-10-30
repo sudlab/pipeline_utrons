@@ -157,16 +157,17 @@ from ruffus.combinatorics import product
 import sys
 import os
 import shutil
-from gffutils import DataIterator as DataIterator
+#from gffutils import DataIterator as DataIterator
 import sqlite3
 import subprocess
 import glob
 from cgatcore import experiment as E
+from cgat import GTF
 import cgat.Sra as Sra
 from cgatcore import pipeline as P
 import cgatpipelines.tasks.rnaseq as RnaSeq
 import tempfile
-from cgatpipelines.report import run_report
+
 
 # load options from the config file
 PARAMS = P.get_parameters(
@@ -224,18 +225,19 @@ STRINGTIE_QUANT_FILES=["i_data.ctab", "e_data.ctab", "t_data.ctab",
 # ---------------------------------------------------
 @follows(mkdir("utron_beds.dir"))
 @subdivide("agg-agg-agg.gtf.gz",
-           regex("(.+)/(.+).gtf.gz"),
+           regex("(.+).gtf.gz"),
            add_inputs("filtered_reference.gtf.gz",
-                      r"\1/\2.class.gz"),
-           [r"utron_beds.dir/\2.all_utrons.bed.gz",
-            r"utron_beds.dir/\2.partnered_utrons.bed.gz",
-            r"utron_beds.dir/\2.novel_utrons.bed.gz"])
+                      r"\1.class.gz"),
+           [r"utron_beds.dir/\1.all_utrons.bed.gz",
+            r"utron_beds.dir/\1.partnered_utrons.bed.gz",
+            r"utron_beds.dir/\1.novel_utrons.bed.gz",
+            r"utron_beds.dir/\1.no_cds.bed.gz"])
 def find_utrons(infiles, outfiles):
 
     infile, reference, classfile = infiles
     job_memory="32G"
 
-    all_out, part_out, novel_out = outfiles
+    all_out, part_out, novel_out, no_cds_out = outfiles
 
     track = P.snip(all_out, ".all_utrons.bed.gz")
     current_file = __file__ 
@@ -253,6 +255,7 @@ def find_utrons(infiles, outfiles):
                              --outfile %(all_out)s
                              --partfile=%(part_out)s
                              --novel-file=%(novel_out)s
+                             --not-cds-outfile=%(no_cds_out)s
                               -L %(track)s.log'''
 
     P.run(statement)
@@ -295,7 +298,7 @@ def loadUtronIDs(infiles, outfile):
                          job_memory="64G")
 
 
-@follows(loadUtronIDs, loadTranscriptClassification)
+@follows(loadUtronIDs)
 def AnnotateAssemblies():
     pass
 
@@ -305,7 +308,7 @@ def AnnotateAssemblies():
 
 ###### Export all_utrons, novel_utrons ids and tx2gene text files from utrons database
 
-@follows(mergeAllQuants, mkdir("expression.dir", "expression.dir/csvdb_files"))
+@follows(getUtronIds, mkdir("expression.dir", "expression.dir/csvdb_files"))
 def CSVDBfiles():
     '''utility function to connect to database.
 
@@ -357,12 +360,26 @@ def identify_splice_sites(infiles, outfiles):
 @transform(PARAMS["annotations_interface_geneset_all_gtf"], regex("(.+).gtf.gz"), "expression.dir/gtf_stop_codons.txt")
 def gtf_stop_codons(infile, gtf):
     outfile = open(gtf, "w")
-    for line in DataIterator(infile):
-        if line.featuretype == "stop_codon":
+    for line in GTF.iterator(iotools.open_file(infile)):
+        if line.feature == "stop_codon":
             if line.strand == "+":
-                outfile.write("%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n" % (''.join(line.attributes['gene_id']),''.join(line.attributes['transcript_id']), ''.join(line.attributes['gene_name']), line.strand, line.featuretype, line.seqid, line.start, line.end))
-            elif line.strand =="-":
-                outfile.write("%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n" % (''.join(line.attributes['gene_id']), ''.join(line.attributes['transcript_id']), ''.join(line.attributes['gene_name']), line.strand, line.featuretype, line.seqid, line.end, line.start))
+                outfile.write("\t".join(line.gene_id,
+                                        line.transcript_id,
+                                        line.gene_name,
+                                        line.strand,
+                                        line.feature,
+                                        line.contig,
+                                        line.start,
+                                        line.end) + "\t")
+            elif line.strand == "-":
+                outfile.write("\t".join(line.gene_id,
+                                        line.transcript_id,
+                                        line.gene_name,
+                                        line.strand,
+                                        line.feature,
+                                        line.contig,
+                                        line.end,
+                                        line.start) + "\t")
         else:
             pass
     outfile.close()
@@ -413,7 +430,7 @@ def utrons_expression(infiles, outfiles):
 
 # --------------------------------------------------------------------------------------------------------------------------------------------
 # Generic pipeline tasks
-@follows(AnnotateAssemblies, export, CSVDBfiles, utrons_expression, identify_splice_sites, gtf_stop_codons)
+@follows(AnnotateAssemblies, CSVDBfiles, utrons_expression, identify_splice_sites, gtf_stop_codons)
 def full():
     pass
 

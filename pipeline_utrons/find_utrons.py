@@ -147,8 +147,11 @@ def main(argv=None):
                 E.debug("Transcript %s matches no gene in class table" % transcript_id)
             continue
 
+        if geneid not in enshashtable:
+            continue
+        
         ens_gene = enshashtable[geneid]
-            
+                    
         all_ref_introns = set()
         all_ref_cds_introns = set()
         novel_transcript_exons = GTF.asRanges(novel_transcript, "exon")
