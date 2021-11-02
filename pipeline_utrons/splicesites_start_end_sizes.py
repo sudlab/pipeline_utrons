@@ -1,8 +1,11 @@
+'''
+Finds the splice sites of the each utron sequence, as well as the size of each,
+and its start and end (strand corrected)
 
-# coding: utf-8
+usage:
 
-# In[2]:
-
+splicesites_start_end_sizes.py [OPTIONS] -I INFILE -S OUTFILE -O PER_UTRON_OUT
+'''
 import sys
 
 from cgat import Bed
@@ -10,19 +13,31 @@ from cgat import IndexedFasta
 from cgatcore import iotools
 from cgat import Genomics
 
+from cgatcore import expriment as E
 
-# In[3]:
+parser = E.OptionParser(version="%prog version: $1.0$",
+                           usage=globals()["__doc__"])
+parser.add_option("-g", "--genome", dest="genome",
+                  help="index fasta genome sequence")
+parser.add_option("-O", "--per-utron-out", dest="outfile",
+                  help="File name for output file that will contain one row"
+                       "per entry in the input")
+options, args = E.start(parser, sys.argv)
+                  
+genome = IndexedFasta.IndexedFasta(options["genome"])
 
 
-genome = IndexedFasta.IndexedFasta("/shared/sudlab1/General/mirror/genomes/plain/hg38.fasta")
-
-
-# In[7]:
-
-
-bedfile = Bed.iterator(iotools.open_file(sys.argv[1]))
+bedfile = Bed.iterator(options.stdin)
 splice_site_dict = dict()
-outfile = iotools.open_file(sys.argv[2], "w")
+outfile = iotools.open_file(options["outfile"], "w")
+outfile.write("\t".join("transcript_id",
+                        "strand",
+                        "ss5",
+                        "ss3",
+                        "contig",
+                        "splice_site_start",
+                        "splice_site_end",
+                        "utron_size"))
 for utron in bedfile:
     
     ss5_sequence = genome.getSequence(utron.contig, "+", utron.start, utron.start+2)
@@ -47,8 +62,7 @@ for utron in bedfile:
         else:
             outfile.write("%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n" % (utron.name, utron.strand, ss3_sequence, ss5_sequence, utron.contig, utron.end, utron.start, utron.end-utron.start))
 
-# In[17]:
-
+outfile.close()
 
 from collections import defaultdict
 

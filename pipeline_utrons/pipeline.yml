@@ -43,7 +43,7 @@ genome: hg38_noalt
 database:
     name: /shared/sudlab1/General/projects/UTRONs/databases/brain/brain_utrons/csvdb
     url: sqlite:////shared/sudlab1/General/projects/UTRONs/databases/brain/brain_utrons/csvdb
-
+    false_positives: /shared/sudlab1/General/projects/UTRONs/databases/60db_novel_utrons_ids.txt
     ################################################################
     #
     # Location of annotation database

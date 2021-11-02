@@ -25,7 +25,7 @@
 Pipeline template
 ===========================
 
-:Author: Andreas Heger
+:Author: Ian Sudbery, Nathan, Sam, Greg Rowland, Cristina Alexandru
 :Release: $Id$
 :Date: |today|
 :Tags: Python
@@ -218,6 +218,19 @@ def connect():
 
     return dbh
 
+@P.cluster_runnable
+def create_index(table, columns):
+    ''' utility function to create table indexes. Supply a list of columns
+    to create a join index on those columns'''
+    
+    dbh = connect()
+    cc = dbh.cursor()
+    
+    index_name = table + "_index_" + "_".join(columns)
+    columns = ",".join(columns)
+    cc.execute("CREATE INDEX %(index_name)s ON %(table)s(%(columns)s)" 
+               % locals())
+    
 STRINGTIE_QUANT_FILES=["i_data.ctab", "e_data.ctab", "t_data.ctab",
                        "i2t.ctab", "e2t.ctab"]
 
@@ -303,9 +316,7 @@ def AnnotateAssemblies():
     pass
 
 
-
 #---------------------------------------------------------------------------------------------------------------
-
 ###### Export all_utrons, novel_utrons ids and tx2gene text files from utrons database
 
 @follows(getUtronIds, mkdir("expression.dir", "expression.dir/csvdb_files"))
@@ -333,32 +344,49 @@ def CSVDBfiles():
                      ".headers on", ".mode tab", ".output expression.dir/csvdb_files/novel_utrons_ids.txt",
                      "select * from novel_utrons_ids where track = 'agg-agg-agg'"])
     
-    shutil.copy("/shared/sudlab1/General/projects/UTRONs/databases/60db_novel_utrons_ids.txt", "expression.dir/csvdb_files/60db_novel_utrons_ids.txt")
+    shutil.copy(PARAMS["database_false_positives"], 
+                "expression.dir/csvdb_files/60db_novel_utrons_ids.txt")
 
 ###### Identify splice sites
 
 @follows(find_utrons)
-@transform("utron_beds.dir/*.bed.gz", regex("(.+)/agg-agg-agg.(.+)_utrons.bed.gz"), [r"expression.dir/\2_splice_sites.txt", r"database_load/\2_splice_sites.load"])
+@transform("utron_beds.dir/*.bed.gz", 
+           regex("(.+)/agg-agg-agg.(.+)_utrons.bed.gz"), 
+           r"expression.dir/\2_splice_sites.txt")
 def identify_splice_sites(infiles, outfiles):
     infile=infiles
     outfile, outfile_load = outfiles
-    #current_file = __file__
-    #pipeline_path = os.path.abspath(current_file)
-    #pipeline_directory = os.path.dirname(pipeline_path)
-    #script_path = "/splicesites_start_end_sizes.py"
-    #full_utron_path = os.path.join(pipeline_directory, script_path)
+    current_file = __file__
+    pipeline_path = os.path.abspath(current_file)
+    pipeline_directory = os.path.dirname(pipeline_path)
+    script_path = os.path.join(pipeline_directory, 
+                               "/splicesites_start_end_sizes.py")
+    fastaref =PARAMS["portcullis_fastaref"]
 
-    statement = ''' python /shared/sudlab1/General/projects/Greg/pipelines/pipeline_utrons/splicesites_start_end_sizes.py %(infile)s %(outfile)s;
-                    sort -u %(outfile)s > %(outfile)s_2.txt; rm %(outfile)s; mv %(outfile)s_2.txt %(outfile)s;
-                    sed -i $'1i transcript_id\\tstrand\\tss5\\tss3\\tcontig\\tsplice_site_start\\tsplice_site_end\\tutron_size' %(outfile)s '''
+    statement = ''' python %(script_path)s -g %(fastaref)s 
+                           -I %(infile)s %(outfile)s'''
     P.run(statement)   
-    P.load(outfile, outfile_load, options = "-i transcript_id -i ss5 -i ss3 -i splice_site_start -i splice_site_end -i utron_size", job_memory="16G")
+
+@transform(identify_splice_sites, suffix(".tsv"), ".load")
+def load_splice_sites(infile, outfile):
+    P.load(infile, 
+           outfile, 
+           options = "-i transcript_id "
+                     "-i ss5 "
+                     "-i ss3 "
+                     "-i splice_site_start "
+                     "-i splice_site_end "
+                     "-i utron_size", 
+            job_memory="16G")
 
 
-###### Extract gene_id, gene_name, strand, chr, start, end from the /shared/sudlab1/General/annotations/hg38_noalt_ensembl85/ensembl.dir/geneset_all.gtf.gz
-
-@transform(PARAMS["annotations_interface_geneset_all_gtf"], regex("(.+).gtf.gz"), "expression.dir/gtf_stop_codons.txt")
+@follows(find_utrons)
+@transform(PARAMS["annotations_interface_geneset_all_gtf"],
+           regex("(.+).gtf.gz"),
+           "expression.dir/gtf_stop_codons.txt")
 def gtf_stop_codons(infile, gtf):
+    '''Extract stop codon positions from reference gtf'''
+
     outfile = open(gtf, "w")
     for line in GTF.iterator(iotools.open_file(infile)):
         if line.feature == "stop_codon":
@@ -385,52 +413,9 @@ def gtf_stop_codons(infile, gtf):
     outfile.close()
 
 
-
-######### Rscript for generating tpm expression values for transcript and gene level, as well as fraction expression ###########
-
-@follows(CSVDBfiles)
-@merge("quantification.dir/*.sf", ["database_load/utrons_expression.load", "database_load/partnered_utrons_expression.load", "database_load/novel_utrons_expression.load"])
-def utrons_expression(infiles, outfiles):
-    outfile_load, partnered_load, novel_load = outfiles
-    job_threads = 4
-    job_memory = "48G"
-    
-    outfile = "expression.dir/utrons_expression.txt"
-    if not os.path.isfile(outfile):
-        statement = ''' Rscript /shared/sudlab1/General/projects/UTRONs/MyFiles/scripts/utrons_Rscript.R '''
-        P.run(statement)
-    else:
-        pass
-#        if not os.path.isfile(outfile):
-#            statement = ''' echo -e '#!/data/mb1cna/cgat/envs/sharc/bin/Rscript\nload(file = "expression.dir/data.RData")\nwrite.table(mdata, "expression.dir/utrons_expression.txt", sep = "\\t", row.names = FALSE, quote = FALSE)' > expression.dir/Rscript.R;
-#                         Rscript expression.dir/Rscript.R;
-#                         rm expression.dir/Rscript.R '''
-#            P.run(statement)
-#        else:
-#            pass
-    P.load(outfile, outfile_load, options = "-i Sample -i transcript_id -i gene_id -i tr_expr -i gene_expr -i fract_expr", job_memory="16G")
-
-    partnered = "expression.dir/partnered_utrons_expression.txt"
-    if not os.path.isfile(partnered):
-        subprocess.call(["sqlite3", PARAMS["database_name"],
-                         ".headers on", ".mode tab", ".output expression.dir/partnered_utrons_expression.txt",
-                         "SELECT * FROM utrons_expression A WHERE transcript_id in (SELECT transcript_id from partnered_utrons_ids)"])
-    else:
-        pass
-    P.load(partnered, partnered_load, options = "-i Sample -i transcript_id -i gene_id -i tr_expr -i gene_expr -i fract_expr", job_memory="16G")
-
-    novel = "expression.dir/novel_utrons_expression.txt"
-    if not os.path.isfile(novel):
-        subprocess.call(["sqlite3", PARAMS["database_name"],
-                         ".headers on", ".mode tab", ".output expression.dir/novel_utrons_expression.txt",
-                         "SELECT * FROM utrons_expression A WHERE transcript_id in (SELECT transcript_id from novel_utrons_ids)"])
-    else:
-        pass
-    P.load(novel, novel_load, options = "-i Sample -i transcript_id -i gene_id -i tr_expr -i gene_expr -i fract_expr", job_memory="16G")
-
 # --------------------------------------------------------------------------------------------------------------------------------------------
 # Generic pipeline tasks
-@follows(AnnotateAssemblies, CSVDBfiles, utrons_expression, identify_splice_sites, gtf_stop_codons)
+@follows(AnnotateAssemblies, CSVDBfiles, identify_splice_sites, gtf_stop_codons)
 def full():
     pass
 
