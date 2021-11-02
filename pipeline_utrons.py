@@ -217,6 +217,19 @@ def connect():
 
     return dbh
 
+@P.cluster_runnable
+def create_index(table, columns):
+    ''' utility function to create table indexes. Supply a list of columns
+    to create a join index on those columns'''
+    
+    dbh = connect()
+    cc = dbh.cursor()
+    
+    index_name = table + "_index_" + "_".join(columns)
+    columns = ",".join(columns)
+    cc.execute("CREATE INDEX %(index_name)s ON %(table)s(%(columns)s)" 
+               % locals())
+    
 STRINGTIE_QUANT_FILES=["i_data.ctab", "e_data.ctab", "t_data.ctab",
                        "i2t.ctab", "e2t.ctab"]
 
@@ -547,6 +560,7 @@ def quantifyWithSalmon(infiles, outfile):
     job_memory="24G"
 
     infile, gtffile = infiles
+    outdir = P.snip(outfile, ".sf")
     basefile = os.path.basename(infile)
     sample_name = basefile.split(os.extsep, 1)
     gtfbase = P.snip(os.path.basename(gtffile), ".gz")
@@ -554,34 +568,34 @@ def quantifyWithSalmon(infiles, outfile):
     salmon_options=PARAMS["salmon_quantoptions"]
 
     sorted_bam="sorted_bams/" + sample_name[0] + "_sorted.bam"
-    fastq1 = P.snip(outfile, "_agg-agg-agg")+".1.fastq"
-    fastq2 = P.snip(outfile, "_agg-agg-agg")+".2.fastq"
-    fastq0 = P.snip(outfile, "_agg-agg-agg")+".0.fastq"
+    fastq1 = P.snip(outfile, "_agg-agg-agg.sf")+".1.fastq"
+    fastq2 = P.snip(outfile, "_agg-agg-agg.sf")+".2.fastq"
+    fastq0 = P.snip(outfile, "_agg-agg-agg.sf")+".0.fastq"
 
     statement = '''
-    samtools sort -n %(infile)s -o %(sorted_bam)s;
+    samtools sort -n %(infile)s -o %(sorted_bam)s &&
     samtools fastq
          -1 %(fastq1)s
          -2 %(fastq2)s
          -0 %(fastq0)s -s /dev/null -n -F 0x900
-         %(sorted_bam)s;
-    paired_end_reads=$(samtools view -c -f 1 %(sorted_bam)s);
+         %(sorted_bam)s &&
+    paired_end_reads=$(samtools view -c -f 1 %(sorted_bam)s) &&
     if [ $paired_end_reads = 0 ]; then
         salmon quant -i %(salmonIndex)s
             --libType IU
             -r %(fastq0)s
-            -o %(outfile)s
-            %(salmon_options)s;
+            -o %(outdir)s
+            %(salmon_options)s &&
     else
         salmon quant -i %(salmonIndex)s
             --libType IU
             -1 %(fastq1)s
             -2 %(fastq2)s
-            -o %(outfile)s
-            %(salmon_options)s;
-    fi; 
-    mv %(outfile)s/quant.sf %(outfile)s.sf; 
-    rm %(fastq1)s; rm %(fastq2)s; rm %(fastq0)s; rm %(sorted_bam)s 
+            -o %(outdir)s
+            %(salmon_options)s 
+    fi &&
+    mv %(outdir)s/quant.sf %(outfile)s && 
+    rm %(fastq1)s && rm %(fastq2)s && rm %(fastq0)s && rm %(sorted_bam)s 
     '''
 
     if infile.endswith(".remote"):
@@ -603,7 +617,7 @@ def quantifyWithSalmon(infiles, outfile):
                 PARAMS["annotations_interface_contigs_bed"]))
 
         infile = " ".join(infile)
-        statement = "; ".join(
+        statement = "&& ".join(
             ["mkdir %(filename)s",
              s,
              statement,
@@ -614,11 +628,23 @@ def quantifyWithSalmon(infiles, outfile):
     P.run(statement)
 
 #----------------------------------------------------
+@follows(quantifyWithSalmon)
+@merge("quantification.dir/*_agg_agg_agg/logs/salmon_quant.log",
+       "mapping_rates.txt")
+def merge_mapping_rates(infiles, outfile):
+    '''Find the mapping rates in the salmon logs'''
+
+    with open(outfile, "w") as outf:
+        for inf in infile:
+            for line in open(infile):
+                if re.match("Mapping rate", line):
+                    outf.write(line)
+
+#----------------------------------------------------
 # ***********
 # NOTE - last time I used this, the output database wasn't indexed correctly
 # ***********
-@follows(quantifyWithSalmon)
-@merge("quantification.dir/*.sf", "database_load/salmon_quant.load")
+@merge(quantifyWithSalmon, "database_load/salmon_quant.load")
 def mergeAllQuants(infiles, outfile):
     job_threads=3
 
@@ -629,14 +655,8 @@ def mergeAllQuants(infiles, outfile):
                          " -i source",
                          job_memory="64G")
 
-    if not os.path.isfile("mapping_rates.txt"):
-        statement = ''' bash /shared/sudlab1/General/projects/UTRONs/MyFiles/scripts/mapping_rates_script.sh '''
-        P.run(statement)
-    else:
-        pass
 
 #---------------------------------------------------------------------------------------------------------------
-
 ###### Export all_utrons, novel_utrons ids and tx2gene text files from utrons database
 
 @follows(mergeAllQuants, mkdir("expression.dir", "expression.dir/csvdb_files"))
@@ -664,91 +684,137 @@ def CSVDBfiles():
                      ".headers on", ".mode tab", ".output expression.dir/csvdb_files/novel_utrons_ids.txt",
                      "select * from novel_utrons_ids where track = 'agg-agg-agg'"])
     
-    shutil.copy("/shared/sudlab1/General/projects/UTRONs/databases/60db_novel_utrons_ids.txt", "expression.dir/csvdb_files/60db_novel_utrons_ids.txt")
+    shutil.copy(PARAMS["database_false_positives"], 
+                "expression.dir/csvdb_files/60db_novel_utrons_ids.txt")
 
 ###### Identify splice sites
 
 @follows(find_utrons, mergeAllAssemblies, mergeAllQuants)
-@transform("utron_beds.dir/*.bed.gz", regex("(.+)/agg-agg-agg.(.+)_utrons.bed.gz"), [r"expression.dir/\2_splice_sites.txt", r"database_load/\2_splice_sites.load"])
+@transform("utron_beds.dir/*.bed.gz", 
+           regex("(.+)/agg-agg-agg.(.+)_utrons.bed.gz"), 
+           r"expression.dir/\2_splice_sites.txt")
 def identify_splice_sites(infiles, outfiles):
     infile=infiles
     outfile, outfile_load = outfiles
-    #current_file = __file__
-    #pipeline_path = os.path.abspath(current_file)
-    #pipeline_directory = os.path.dirname(pipeline_path)
-    #script_path = "/splicesites_start_end_sizes.py"
-    #full_utron_path = os.path.join(pipeline_directory, script_path)
+    current_file = __file__
+    pipeline_path = os.path.abspath(current_file)
+    pipeline_directory = os.path.dirname(pipeline_path)
+    script_path = os.path.join(pipeline_directory, 
+                               "/splicesites_start_end_sizes.py")
+    fastaref =PARAMS["portcullis_fastaref"]
 
-    statement = ''' python /shared/sudlab1/General/projects/Greg/pipelines/pipeline_utrons/splicesites_start_end_sizes.py %(infile)s %(outfile)s;
-                    sort -u %(outfile)s > %(outfile)s_2.txt; rm %(outfile)s; mv %(outfile)s_2.txt %(outfile)s;
-                    sed -i $'1i transcript_id\\tstrand\\tss5\\tss3\\tcontig\\tsplice_site_start\\tsplice_site_end\\tutron_size' %(outfile)s '''
+    statement = ''' python %(script_path)s -g %(fastaref)s 
+                           -I %(infile)s %(outfile)s'''
     P.run(statement)   
-    P.load(outfile, outfile_load, options = "-i transcript_id -i ss5 -i ss3 -i splice_site_start -i splice_site_end -i utron_size", job_memory="16G")
 
+@transform(identify_splice_sites, suffix(".tsv"), ".load")
+def load_splice_sites(infile, outfile):
+    P.load(infile, 
+           outfile, 
+           options = "-i transcript_id "
+                     "-i ss5 "
+                     "-i ss3 "
+                     "-i splice_site_start "
+                     "-i splice_site_end "
+                     "-i utron_size", 
+            job_memory="16G")
 
-###### Extract gene_id, gene_name, strand, chr, start, end from the /shared/sudlab1/General/annotations/hg38_noalt_ensembl85/ensembl.dir/geneset_all.gtf.gz
 
 @follows(find_utrons, mergeAllAssemblies, mergeAllQuants)
-@transform(PARAMS["annotations_interface_geneset_all_gtf"], regex("(.+).gtf.gz"), "expression.dir/gtf_stop_codons.txt")
+@transform(PARAMS["annotations_interface_geneset_all_gtf"],
+           regex("(.+).gtf.gz"),
+           "expression.dir/gtf_stop_codons.txt")
 def gtf_stop_codons(infile, gtf):
+    '''Extract stop codon positions from reference gtf'''
+
     outfile = open(gtf, "w")
     for line in DataIterator(infile):
         if line.featuretype == "stop_codon":
             if line.strand == "+":
-                outfile.write("%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n" % (''.join(line.attributes['gene_id']),''.join(line.attributes['transcript_id']), ''.join(line.attributes['gene_name']), line.strand, line.featuretype, line.seqid, line.start, line.end))
+                outfile.write("%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n" % 
+                     (line.attributes['gene_id'],
+                      line.attributes['transcript_id'],
+                      line.attributes['gene_name'],
+                      line.strand, 
+                      line.featuretype, 
+                      line.seqid, 
+                      line.start, 
+                      line.end))
             elif line.strand =="-":
-                outfile.write("%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n" % (''.join(line.attributes['gene_id']), ''.join(line.attributes['transcript_id']), ''.join(line.attributes['gene_name']), line.strand, line.featuretype, line.seqid, line.end, line.start))
+                 outfile.write("%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n" % 
+                     (line.attributes['gene_id'],
+                      line.attributes['transcript_id'],
+                      line.attributes['gene_name'],
+                      line.strand, 
+                      line.featuretype, 
+                      line.seqid, 
+                      line.end, 
+                      line.start))
         else:
             pass
     outfile.close()
 
-
-
-######### Rscript for generating tpm expression values for transcript and gene level, as well as fraction expression ###########
+######### Rscript for generating tpm expression values for transcript and 
+# gene level, as well as fraction expression ###########
 
 @follows(CSVDBfiles, quantifyWithSalmon)
-@merge("quantification.dir/*.sf", ["database_load/utrons_expression.load", "database_load/partnered_utrons_expression.load", "database_load/novel_utrons_expression.load"])
+@merge("quantification.dir/*.sf",
+       ["database_load/utrons_expression.load", 
+        "database_load/partnered_utrons_expression.load", 
+        "database_load/novel_utrons_expression.load"])
 def utrons_expression(infiles, outfiles):
     outfile_load, partnered_load, novel_load = outfiles
     job_threads = 4
     job_memory = "48G"
-    
+    script_file = os.path.join(P.snip(__file__, ".py"), "utrons_Rscript.R")
     outfile = "expression.dir/utrons_expression.txt"
-    if not os.path.isfile(outfile):
-        statement = ''' Rscript /shared/sudlab1/General/projects/UTRONs/MyFiles/scripts/utrons_Rscript.R '''
-        P.run(statement)
-    else:
-        pass
-#        if not os.path.isfile(outfile):
-#            statement = ''' echo -e '#!/data/mb1cna/cgat/envs/sharc/bin/Rscript\nload(file = "expression.dir/data.RData")\nwrite.table(mdata, "expression.dir/utrons_expression.txt", sep = "\\t", row.names = FALSE, quote = FALSE)' > expression.dir/Rscript.R;
-#                         Rscript expression.dir/Rscript.R;
-#                         rm expression.dir/Rscript.R '''
-#            P.run(statement)
-#        else:
-#            pass
-    P.load(outfile, outfile_load, options = "-i Sample -i transcript_id -i gene_id -i tr_expr -i gene_expr -i fract_expr", job_memory="16G")
+    statement = '''Rscript %(script_file)s '''
+    P.run(statement)
+    
+    P.load(outfile, 
+           outfile_load, 
+           options = "-i Sample -i transcript_id -i gene_id -i tr_expr "
+                     "-i gene_expr -i fract_expr",
+           job_memory="16G")
 
     partnered = "expression.dir/partnered_utrons_expression.txt"
-    if not os.path.isfile(partnered):
-        subprocess.call(["sqlite3", PARAMS["database_name"],
-                         ".headers on", ".mode tab", ".output expression.dir/partnered_utrons_expression.txt",
-                         "SELECT * FROM utrons_expression A WHERE transcript_id in (SELECT transcript_id from partnered_utrons_ids)"])
-    else:
-        pass
-    P.load(partnered, partnered_load, options = "-i Sample -i transcript_id -i gene_id -i tr_expr -i gene_expr -i fract_expr", job_memory="16G")
-
-    novel = "expression.dir/novel_utrons_expression.txt"
-    if not os.path.isfile(novel):
-        subprocess.call(["sqlite3", PARAMS["database_name"],
-                         ".headers on", ".mode tab", ".output expression.dir/novel_utrons_expression.txt",
-                         "SELECT * FROM utrons_expression A WHERE transcript_id in (SELECT transcript_id from novel_utrons_ids)"])
-    else:
-        pass
-    P.load(novel, novel_load, options = "-i Sample -i transcript_id -i gene_id -i tr_expr -i gene_expr -i fract_expr", job_memory="16G")
+    
+    connect().cursor().executescript(
+        '''DROP TABLE IF EXISTS partenered_utron_expression;
+           CREATE TABLE partnered_utron_expression AS
+           SELECT * 
+             FROM utrons_expression
+             WHERE transcript_id in 
+             (SELECT transcript_id 
+               FROM partnered_utrons_ids
+               WHERE track='agg-agg-agg')''')
+    
+    for column in ("Sample", "transcript_id", "gene_id", "tr_expr", 
+                   "gene_expr", "fract_expr"):
+        create_index("partnered_utrons_expression", column, submit=True,
+                     job_memory="16G")
+        
+    connect().cursor().executescript(
+        '''DROP TABLE IF EXISTS partenered_utron_expression;
+           CREATE TABLE partnered_utron_expression AS
+           SELECT * 
+             FROM 
+                  utrons_expression
+             WHERE 
+                  transcript_id in 
+                  (SELECT transcript_id 
+                   FROM partnered_utrons_ids
+                   WHERE track='agg-agg-agg')''')
+    
+    for column in ("Sample", "transcript_id", "gene_id", "tr_expr", 
+                   "gene_expr", "fract_expr"):
+        create_index("novel_utrons_expression", column, submit=True,
+                     job_memory="16G")
 
 # --------------------------------------------------------------------------------------------------------------------------------------------
 # Generic pipeline tasks
-@follows(Assembly, AnnotateAssemblies, export, mergeAllQuants, CSVDBfiles, utrons_expression, identify_splice_sites, gtf_stop_codons)
+@follows(Assembly, AnnotateAssemblies, export, mergeAllQuants, 
+         CSVDBfiles, utrons_expression, identify_splice_sites, gtf_stop_codons)
 def full():
     pass
 
