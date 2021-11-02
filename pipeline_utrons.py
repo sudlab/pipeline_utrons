@@ -759,11 +759,9 @@ def gtf_stop_codons(infile, gtf):
 
 @follows(CSVDBfiles, quantifyWithSalmon)
 @merge("quantification.dir/*.sf",
-       ["database_load/utrons_expression.load", 
-        "database_load/partnered_utrons_expression.load", 
-        "database_load/novel_utrons_expression.load"])
+       "database_load/utrons_expression.load")
 def utrons_expression(infiles, outfiles):
-    outfile_load, partnered_load, novel_load = outfiles
+    outfile_load = outfiles
     job_threads = 4
     job_memory = "48G"
     script_file = os.path.join(P.snip(__file__, ".py"), "utrons_Rscript.R")
