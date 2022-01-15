@@ -162,6 +162,7 @@ import sqlite3
 import subprocess
 import glob
 from cgatcore import experiment as E
+from cgatcore import iotools
 from cgat import GTF
 import cgat.Sra as Sra
 from cgatcore import pipeline as P
@@ -391,23 +392,23 @@ def gtf_stop_codons(infile, gtf):
     for line in GTF.iterator(iotools.open_file(infile)):
         if line.feature == "stop_codon":
             if line.strand == "+":
-                outfile.write("\t".join(line.gene_id,
+                outfile.write("\t".join(map(str,(line.gene_id,
                                         line.transcript_id,
                                         line.gene_name,
                                         line.strand,
                                         line.feature,
                                         line.contig,
                                         line.start,
-                                        line.end) + "\t")
+                                        line.end))) + "\n")
             elif line.strand == "-":
-                outfile.write("\t".join(line.gene_id,
+                outfile.write("\t".join(map(str,(line.gene_id,
                                         line.transcript_id,
                                         line.gene_name,
                                         line.strand,
                                         line.feature,
                                         line.contig,
                                         line.end,
-                                        line.start) + "\t")
+                                        line.start))) + "\n")
         else:
             pass
     outfile.close()
