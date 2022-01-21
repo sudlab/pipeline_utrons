@@ -179,11 +179,6 @@ def main(argv=None):
                 E.debug("No starts found for %s" % transcript_id)
             continue
         
-        #if novel_transcript[0].strand == "-":
-        #    selected_start = max(filtered_starts)
-        #else:
-        #    selected_start = min(filtered_starts)
-
         selected_models = list()
         for startc in filtered_starts:
             selected_models.extend(ens_gene["start_codons"][startc])
