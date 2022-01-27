@@ -320,7 +320,7 @@ def AnnotateAssemblies():
 #---------------------------------------------------------------------------------------------------------------
 ###### Export all_utrons, novel_utrons ids and tx2gene text files from utrons database
 
-@follows(getUtronIds, mkdir("expression.dir", "expression.dir/csvdb_files"))
+@follows(getUtronIds, loadUtronIDs, mkdir("expression.dir", "expression.dir/csvdb_files"))
 def CSVDBfiles():
     '''utility function to connect to database.
 
@@ -351,17 +351,16 @@ def CSVDBfiles():
 ###### Identify splice sites
 
 @follows(find_utrons)
-@transform("utron_beds.dir/*.bed.gz", 
-           regex("(.+)/agg-agg-agg.(.+)_utrons.bed.gz"), 
+@transform(find_utrons, 
+           regex("(.+)/agg-agg-agg.(.+?)(_utrons)?.bed.gz"), 
            r"expression.dir/\2_splice_sites.txt")
-def identify_splice_sites(infiles, outfiles):
+def identify_splice_sites(infiles, outfile):
     infile=infiles
-    outfile, outfile_load = outfiles
     current_file = __file__
     pipeline_path = os.path.abspath(current_file)
     pipeline_directory = os.path.dirname(pipeline_path)
     script_path = os.path.join(pipeline_directory, 
-                               "/splicesites_start_end_sizes.py")
+                               "splicesites_start_end_sizes.py")
     fastaref =PARAMS["portcullis_fastaref"]
 
     statement = ''' python %(script_path)s -g %(fastaref)s 
@@ -381,7 +380,6 @@ def load_splice_sites(infile, outfile):
             job_memory="16G")
 
 
-@follows(find_utrons)
 @transform(PARAMS["annotations_interface_geneset_all_gtf"],
            regex("(.+).gtf.gz"),
            "expression.dir/gtf_stop_codons.txt")
