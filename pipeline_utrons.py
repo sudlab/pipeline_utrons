@@ -164,9 +164,7 @@ import glob
 from cgatcore import experiment as E
 import cgat.Sra as Sra
 from cgatcore import pipeline as P
-import cgatpipelines.tasks.rnaseq as RnaSeq
 import tempfile
-from cgatpipelines.report import run_report
 
 # load options from the config file
 PARAMS = P.get_parameters(
@@ -244,6 +242,7 @@ STRINGTIE_QUANT_FILES=["i_data.ctab", "e_data.ctab", "t_data.ctab",
                PARAMS["annotations_interface_geneset_all_gtf"])),
            "assembled_transcripts.dir/{basename[0]}.gtf.gz")
 def assembleWithStringTie(infiles, outfile):
+    '''infiles will look like [alignments_file, annotation_file]'''
 
     infile, reference = infiles
     basefile = os.path.basename(infile)
@@ -255,7 +254,7 @@ def assembleWithStringTie(infiles, outfile):
     
     statement =  '''
                     portcullis full 
-			    -t 1
+			                -t 1
                             -o portcullis/%(basefile)s/
                             -r %(portcullis_bedref)s
                             -b
@@ -830,43 +829,6 @@ def renderMultiqc(infile):
         "mv multiqc_report.html MultiQC_report.dir/")
 
     P.run(statement)
-
-
-@follows(renderMultiqc)
-
-################################################### added #
-
-@follows(mkdir("report"))
-def build_report():
-    '''build report from scratch.
-
-    Any existing report will be overwritten.
-    '''
-
-    E.info("starting report build process from scratch")
-    run_report(clean=True)
-
-
-@follows(mkdir("report"))
-def update_report():
-    '''update report.
-
-    This will update a report with any changes inside the report
-    document or code. Note that updates to the data will not cause
-    relevant sections to be updated. Use the cgatreport-clean utility
-    first.
-    '''
-
-    E.info("updating report")
-    run_report(clean=False)
-
-
-@follows(update_report)
-def publish_report():
-    '''publish report in the CGAT downloads directory.'''
-
-    E.info("publishing report")
-    P.publish_report()
 
 
 def main(argv=None):
